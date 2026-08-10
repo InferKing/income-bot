@@ -1,0 +1,274 @@
+services:
+  postgres:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_DB: income_tg
+      POSTGRES_USER: income_tg
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-income_tg}
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U income_tg -d income_tg"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    ports:
+      - "127.0.0.1:5432:5432"
+
+  init:
+    build: .
+    env_file: .env
+    environment:
+      INCOME_TG_DATABASE_URL: postgresql+asyncpg://income_tg:${POSTGRES_PASSWORD:-income_tg}@postgres:5432/income_tg
+    command: ["true"]
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: "no"
+
+  bot:
+    build: .
+    env_file: .env
+    environment:
+      INCOME_TG_DATABASE_URL: postgresql+asyncpg://income_tg:${POSTGRES_PASSWORD:-income_tg}@postgres:5432/income_tg
+      INCOME_TG_SKIP_BOOTSTRAP: "true"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      init:
+        condition: service_completed_successfully
+    restart: unless-stopped
+    volumes:
+      - model-artifacts:/var/lib/income-tg/models
+      - backups:/var/backups/income-tg
+    logging:
+      options:
+        max-size: "10m"
+        max-file: "5"
+
+  collector-bybit:
+    build: .
+    env_file: .env
+    environment:
+      INCOME_TG_DATABASE_URL: postgresql+asyncpg://income_tg:${POSTGRES_PASSWORD:-income_tg}@postgres:5432/income_tg
+      INCOME_TG_SKIP_BOOTSTRAP: "true"
+    command:
+      - python
+      - -m
+      - income_tg.market_data.cli
+      - --provider
+      - bybit
+      - --market
+      - perpetual
+      - --symbols
+      - BTC
+      - ETH
+      - TON
+    depends_on:
+      postgres:
+        condition: service_healthy
+      init:
+        condition: service_completed_successfully
+    restart: unless-stopped
+    logging:
+      options:
+        max-size: "20m"
+        max-file: "5"
+
+  collector-okx:
+    build: .
+    env_file: .env
+    environment:
+      INCOME_TG_DATABASE_URL: postgresql+asyncpg://income_tg:${POSTGRES_PASSWORD:-income_tg}@postgres:5432/income_tg
+      INCOME_TG_SKIP_BOOTSTRAP: "true"
+    command:
+      - python
+      - -m
+      - income_tg.market_data.cli
+      - --provider
+      - okx
+      - --market
+      - perpetual
+      - --symbols
+      - BTC
+      - ETH
+      - TON
+    depends_on:
+      postgres:
+        condition: service_healthy
+      init:
+        condition: service_completed_successfully
+    restart: unless-stopped
+    logging:
+      options:
+        max-size: "20m"
+        max-file: "5"
+
+  features:
+    build: .
+    env_file: .env
+    environment:
+      INCOME_TG_DATABASE_URL: postgresql+asyncpg://income_tg:${POSTGRES_PASSWORD:-income_tg}@postgres:5432/income_tg
+      INCOME_TG_SKIP_BOOTSTRAP: "true"
+    command: ["income-tg-features"]
+    depends_on:
+      postgres:
+        condition: service_healthy
+      init:
+        condition: service_completed_successfully
+      collector-bybit:
+        condition: service_started
+    restart: unless-stopped
+    logging:
+      options:
+        max-size: "10m"
+        max-file: "5"
+
+  scheduler:
+    build: .
+    env_file: .env
+    environment:
+      INCOME_TG_DATABASE_URL: postgresql+asyncpg://income_tg:${POSTGRES_PASSWORD:-income_tg}@postgres:5432/income_tg
+      INCOME_TG_SKIP_BOOTSTRAP: "true"
+    command:
+      - income-tg-scheduler
+      - --model-dir
+      - /var/lib/income-tg/models
+      - --state-file
+      - /var/lib/income-tg/models/scheduler-state.json
+    depends_on:
+      postgres:
+        condition: service_healthy
+      init:
+        condition: service_completed_successfully
+      features:
+        condition: service_started
+    restart: unless-stopped
+    volumes:
+      - model-artifacts:/var/lib/income-tg/models
+    logging:
+      options:
+        max-size: "10m"
+        max-file: "5"
+
+  worker:
+    build: .
+    env_file: .env
+    environment:
+      INCOME_TG_DATABASE_URL: postgresql+asyncpg://income_tg:${POSTGRES_PASSWORD:-income_tg}@postgres:5432/income_tg
+      INCOME_TG_SKIP_BOOTSTRAP: "true"
+    command:
+      - income-tg-worker
+      - --instrument
+      - BTC/USDT:PERP
+      - --horizon
+      - 15m
+      - --model-dir
+      - /var/lib/income-tg/models
+    depends_on:
+      postgres:
+        condition: service_healthy
+      init:
+        condition: service_completed_successfully
+      features:
+        condition: service_started
+      scheduler:
+        condition: service_started
+    restart: unless-stopped
+    volumes:
+      - model-artifacts:/var/lib/income-tg/models
+    logging:
+      options:
+        max-size: "10m"
+        max-file: "5"
+
+  health:
+    build: .
+    env_file: .env
+    environment:
+      INCOME_TG_DATABASE_URL: postgresql+asyncpg://income_tg:${POSTGRES_PASSWORD:-income_tg}@postgres:5432/income_tg
+      INCOME_TG_SKIP_BOOTSTRAP: "true"
+    command:
+      - python
+      - -m
+      - income_tg.operations.cli_health
+      - --model-pointer
+      - /var/lib/income-tg/models/champion.json
+      - --snapshot-path
+      - /run/income-tg/readiness.json
+      - --instance-id
+      - readiness-1
+      - --watch-seconds
+      - "10"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      init:
+        condition: service_completed_successfully
+      bot:
+        condition: service_started
+      collector-bybit:
+        condition: service_started
+    restart: unless-stopped
+    volumes:
+      - model-artifacts:/var/lib/income-tg/models:ro
+      - readiness:/run/income-tg
+    healthcheck:
+      test: ["CMD", "python", "-c", "import json; assert json.load(open('/run/income-tg/readiness.json'))['ready']"]
+      interval: 15s
+      timeout: 3s
+      retries: 3
+    logging:
+      options:
+        max-size: "5m"
+        max-file: "3"
+
+  preflight:
+    build: .
+    profiles: ["production"]
+    env_file: .env
+    environment:
+      INCOME_TG_DATABASE_URL: postgresql+asyncpg://income_tg:${POSTGRES_PASSWORD:-income_tg}@postgres:5432/income_tg
+      INCOME_TG_SKIP_BOOTSTRAP: "true"
+    entrypoint: ["python", "/app/scripts/production_preflight.py"]
+    command:
+      - --backup-dir
+      - /var/backups/income-tg
+      - --model-artifact
+      - /var/lib/income-tg/models/champion.json
+      - --pg-dump
+      - /usr/bin/pg_dump
+      - --backup-dsn-env
+      - INCOME_TG_BACKUP_DATABASE_DSN
+    volumes:
+      - model-artifacts:/var/lib/income-tg/models:ro
+      - backups:/var/backups/income-tg
+    restart: "no"
+
+  backup:
+    build: .
+    profiles: ["operations"]
+    env_file: .env
+    environment:
+      INCOME_TG_SKIP_BOOTSTRAP: "true"
+    entrypoint: ["python", "/app/scripts/backup_postgres.py"]
+    command:
+      - --backup-dir
+      - /var/backups/income-tg
+      - --pg-dump
+      - /usr/bin/pg_dump
+      - --dsn-env
+      - INCOME_TG_BACKUP_DATABASE_DSN
+      - --retention-days
+      - "14"
+      - --minimum-to-keep
+      - "3"
+    volumes:
+      - backups:/var/backups/income-tg
+    restart: "no"
+
+volumes:
+  postgres-data:
+  model-artifacts:
+  backups:
+  readiness:

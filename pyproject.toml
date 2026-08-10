@@ -1,0 +1,68 @@
+[build-system]
+requires = ["hatchling>=1.27,<2"]
+build-backend = "hatchling.build"
+
+[project]
+name = "income-tg"
+version = "0.1.0"
+description = "Personal Telegram crypto analytics and paper-trading assistant"
+readme = "README.md"
+requires-python = ">=3.12,<3.13"
+dependencies = [
+  "aiogram>=3.20,<4",
+  "aiohttp>=3.11,<4",
+  "alembic>=1.15,<2",
+  "asyncpg>=0.30,<1",
+  "joblib>=1.4,<2",
+  "numpy>=2.2,<3",
+  "pydantic-settings>=2.8,<3",
+  "scikit-learn>=1.6,<2",
+  "sqlalchemy[asyncio]>=2.0.38,<3",
+  "structlog>=25.1,<26",
+]
+
+[project.optional-dependencies]
+dev = [
+  "aiosqlite>=0.21,<1",
+  "mypy>=1.15,<2",
+  "pytest>=8.3,<9",
+  "pytest-asyncio>=0.25,<2",
+  "ruff>=0.11,<1",
+]
+
+[project.scripts]
+income-tg-bot = "income_tg.bot.main:main"
+income-tg-bootstrap = "income_tg.cli.bootstrap:main"
+income-tg-features = "income_tg.features.cli:main"
+income-tg-scheduler = "income_tg.jobs.cli:main"
+income-tg-worker = "income_tg.worker.cli:main"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/income_tg"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]
+
+[tool.ruff]
+target-version = "py312"
+line-length = 100
+src = ["src", "tests"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "ASYNC", "RUF"]
+ignore = ["RUF001"]
+
+[tool.ruff.format]
+quote-style = "double"
+
+[tool.mypy]
+python_version = "3.12"
+strict = true
+plugins = ["pydantic.mypy"]
+packages = ["income_tg"]
+mypy_path = "src"
+
+[[tool.mypy.overrides]]
+module = ["aiosqlite.*", "joblib.*", "sklearn.*"]
+ignore_missing_imports = true
