@@ -8,7 +8,6 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 import structlog
-from sqlalchemy import select
 
 from income_tg.config import get_settings
 from income_tg.jobs.activation import FileModelActivator
@@ -29,6 +28,7 @@ from income_tg.logging import configure_logging
 from income_tg.models.inference import EnsembleModel
 from income_tg.models.registry import FileModelRegistry
 from income_tg.storage.database import Database
+from income_tg.storage.instruments import find_instrument
 from income_tg.storage.trading_models import InstrumentRecord
 
 
@@ -37,15 +37,7 @@ async def run(args: argparse.Namespace) -> None:
     configure_logging(settings.log_level)
     database = Database(settings.database_url)
     try:
-        async with database.session_factory() as session:
-            instrument = await session.scalar(
-                select(InstrumentRecord).where(
-                    InstrumentRecord.canonical_symbol == args.instrument,
-                    InstrumentRecord.market_type == "linear_perpetual",
-                )
-            )
-        if instrument is None:
-            raise RuntimeError(f"Инструмент еще не собран: {args.instrument}")
+        instrument = await _wait_for_instrument(database, args.instrument, run_once=args.run_once)
         target = TrainingTarget(
             instrument_id=instrument.id,
             horizon=args.horizon,
@@ -90,6 +82,28 @@ async def run(args: argparse.Namespace) -> None:
 
 async def _activation_check(model: EnsembleModel) -> bool:
     return bool(model.feature_names) and model.metadata.get("samples", 0) >= 40
+
+
+async def _wait_for_instrument(
+    database: Database,
+    symbol: str,
+    *,
+    run_once: bool,
+) -> InstrumentRecord:
+    logger = structlog.get_logger()
+    while True:
+        async with database.session_factory() as session:
+            instrument = await find_instrument(
+                session,
+                symbol,
+                market_type="linear_perpetual",
+            )
+        if instrument is not None:
+            return instrument
+        if run_once:
+            raise RuntimeError(f"Инструмент еще не собран: {symbol}")
+        logger.warning("scheduler_waiting_for_instrument", instrument=symbol)
+        await asyncio.sleep(5)
 
 
 async def _bootstrap_until_champion(
