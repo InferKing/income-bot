@@ -36,13 +36,13 @@ from income_tg.signals.domain import MarketType, SignalAction, SignalCandidate
 from income_tg.signals.policy import SignalPolicy
 from income_tg.signals.service import SignalService
 from income_tg.storage.database import Database
+from income_tg.storage.instruments import find_instrument
 from income_tg.storage.models import Portfolio, User
 from income_tg.storage.trading_models import (
     DerivativeMetricRecord,
     EquityPointRecord,
     FeatureVectorRecord,
     FxRateRecord,
-    InstrumentRecord,
     MarketCandleRecord,
     ModelVersionRecord,
     OrderbookSnapshotRecord,
@@ -178,11 +178,10 @@ async def _run_cycle(
                 Portfolio.kind == PortfolioKind.PAPER.value,
             )
         )
-        instrument = await session.scalar(
-            select(InstrumentRecord).where(
-                InstrumentRecord.canonical_symbol == instrument_symbol,
-                InstrumentRecord.market_type == "linear_perpetual",
-            )
+        instrument = await find_instrument(
+            session,
+            instrument_symbol,
+            market_type="linear_perpetual",
         )
         if portfolio is None or instrument is None:
             return "PORTFOLIO_OR_INSTRUMENT_MISSING"

@@ -21,6 +21,7 @@ from income_tg.market_data.schemas import (
     OrderBookUpdate,
     Trade,
 )
+from income_tg.storage.instruments import canonical_instrument_symbol
 from income_tg.storage.trading_models import (
     DataQualityEventRecord,
     DerivativeMetricRecord,
@@ -72,7 +73,7 @@ class MarketDataRepository:
         cached = self._instrument_ids.get(instrument)
         if cached is not None:
             return cached
-        canonical_symbol = f"{instrument.base}/{instrument.quote}"
+        canonical_symbol = canonical_instrument_symbol(instrument.symbol)
         market_type = instrument.kind.value
         query = select(InstrumentRecord.id).where(
             InstrumentRecord.canonical_symbol == canonical_symbol,
