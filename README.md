@@ -7,6 +7,7 @@
 ## Что работает
 
 - доступ только для одного Telegram ID;
+- постоянная клавиатура, интерактивная справка и копирование примеров команд;
 - реальный портфель `Crypto Wallet`;
 - отдельный виртуальный портфель со стартовым балансом 100 000 RUB;
 - пополнение, вывод, покупка и продажа;
@@ -69,11 +70,11 @@ cp .env.example .env
 
 ```env
 INCOME_TG_BOT_TOKEN=токен_от_BotFather
-INCOME_TG_TELEGRAM_PROXY_URL=socks5://172.17.0.1:1080
+INCOME_TG_TELEGRAM_PROXY_URL=
 INCOME_TG_TELEGRAM_OWNER_ID=1
 ```
 
-`INCOME_TG_TELEGRAM_PROXY_URL` необязателен и применяется только к Telegram API. Оставьте его пустым, если сервер подключается к Telegram напрямую.
+`INCOME_TG_TELEGRAM_PROXY_URL` необязателен и применяется только к Telegram API. Оставьте его пустым, если сервер подключается к Telegram напрямую. Если прокси необходим, укажите SOCKS-адрес, доступный из контейнера `bot`, например `socks5://proxy-host:1080`. Адрес `172.17.0.1` подходит только для специально настроенного прокси на Docker-хосте и не должен копироваться без такой настройки.
 
 ### 3. Настроить пароль PostgreSQL
 
@@ -90,6 +91,16 @@ POSTGRES_PASSWORD=полученный_пароль
 INCOME_TG_DATABASE_URL=postgresql+asyncpg://income_tg:полученный_пароль@postgres:5432/income_tg
 INCOME_TG_BACKUP_DATABASE_DSN=postgresql://income_tg:полученный_пароль@postgres:5432/income_tg
 ```
+
+Для production-запуска на VPS также установить:
+
+```env
+INCOME_TG_ENVIRONMENT=production
+INCOME_TG_PAPER_ONLY=true
+INCOME_TG_DEBUG=false
+```
+
+Без `INCOME_TG_ENVIRONMENT=production` команда production preflight намеренно завершится ошибкой.
 
 Файл `.env` не попадает в Git. Не публикуйте токен бота, пароль базы или seed-фразу кошелька.
 
@@ -140,13 +151,13 @@ docker compose logs --tail 100 collector-bybit collector-okx features scheduler 
 
 Контейнеры работают в фоне после закрытия SSH-сессии. В Telegram доступны:
 
-- `/status` — сервисы и активная модель;
+- `/status` — сервисы, свежесть данных, прогресс BTC/15m и активная модель;
 - `/stats` — paper equity и просадка;
 - `/signals` — последние сигналы;
 - `/portfolio` — ручной и виртуальный портфели;
 - `/risk` — действующие ограничения риска.
 
-Текущий автоматический worker работает с `BTC/USDT:PERP` на горизонте `15m`. ETH и TON собираются для последующего отдельного обучения и допуска моделей.
+Текущий автоматический worker и обучение работают с `BTC/USDT:PERP` на горизонте `15m`. Для ETH собираются данные, пригодные для последующего отдельного обучения. Для TON Bybit сохраняет сырые рыночные данные, но feature pipeline и обучение TON пока отключены: на OKX отсутствует резервный инструмент `TON-USDT-SWAP`.
 
 ### 8. Остановка и повторный запуск
 
@@ -234,6 +245,7 @@ docker compose up -d postgres
 
 ```text
 /id
+/help
 /portfolio
 /signals
 /stats
@@ -246,6 +258,8 @@ docker compose up -d postgres
 /sell BTC USDT 0.001 65000 0.065
 /reconcile BTC=0.01 USDT=500 RUB=1000
 ```
+
+Основные разделы доступны и через постоянную клавиатуру. В интерактивной справке можно сразу открыть нужный экран, а для команд с параметрами — скопировать готовый пример.
 
 `/reconcile` принимает полный снимок: ранее существовавший актив, не указанный в команде, будет обнулен. Реальные операции никогда не отправляются в Crypto Wallet — бот только отражает их в своем журнале.
 
