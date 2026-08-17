@@ -16,6 +16,7 @@ class Settings(BaseSettings):
     )
 
     bot_token: SecretStr | None = None
+    telegram_proxy_url: SecretStr | None = None
     telegram_owner_id: int = Field(default=0, ge=0)
     database_url: str = "postgresql+asyncpg://income_tg:income_tg@localhost:5432/income_tg"
     log_level: str = "INFO"

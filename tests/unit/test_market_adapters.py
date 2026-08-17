@@ -179,3 +179,32 @@ async def test_okx_uses_swap_symbol_for_linear_perpetual() -> None:
 
     assert spec.quantity_step == Decimal("0.001")
     assert rest.calls[0][2] == {"instType": "SWAP", "instId": "ETH-USDT-SWAP"}
+
+
+@pytest.mark.asyncio
+async def test_okx_snapshot_normalizes_negative_previous_sequence() -> None:
+    ws = FakeWebSocket(
+        [
+            {
+                "arg": {"channel": "books", "instId": "BTC-USDT-SWAP"},
+                "action": "snapshot",
+                "data": [
+                    {
+                        "ts": "1720000000000",
+                        "seqId": 12,
+                        "prevSeqId": -1,
+                        "bids": [["10", "2", "0", "1"]],
+                        "asks": [["11", "3", "0", "1"]],
+                    }
+                ],
+            }
+        ]
+    )
+    adapter = OkxAdapter(FakeRest([]), ws)
+    instrument = Instrument("BTC", kind=InstrumentKind.LINEAR_PERPETUAL)
+
+    updates = [item async for item in adapter.stream_orderbook(instrument)]
+
+    assert updates[0].sequence == 12
+    assert updates[0].previous_sequence is None
+    assert updates[0].is_snapshot

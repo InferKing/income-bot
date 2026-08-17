@@ -11,6 +11,7 @@
 - `INCOME_TG_ENVIRONMENT=production`;
 - `INCOME_TG_DATABASE_URL` — DSN приложения;
 - `INCOME_TG_BOT_TOKEN`;
+- необязательный `INCOME_TG_TELEGRAM_PROXY_URL` для доступа только к Telegram API;
 - `INCOME_TG_TELEGRAM_OWNER_ID`;
 - `INCOME_TG_PAPER_ONLY=true`;
 - `INCOME_TG_DEBUG=false`;

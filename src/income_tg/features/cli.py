@@ -27,10 +27,21 @@ async def run(*, once: bool = False) -> None:
                     )
                 )
                 created = 0
+                outcomes: dict[str, dict[str, object]] = {}
                 service = OnlineFeatureService(session)
                 for instrument in instruments:
-                    created += await service.build_latest(instrument)
-            logger.info("feature_cycle_completed", vectors_created=created)
+                    result = await service.build_latest(instrument)
+                    created += result.vectors_created
+                    outcomes[instrument.canonical_symbol] = {
+                        "outcome": result.outcome,
+                        "as_of": result.as_of.isoformat() if result.as_of else None,
+                        "candidate_lag_seconds": result.candidate_lag_seconds,
+                    }
+            logger.info(
+                "feature_cycle_completed",
+                vectors_created=created,
+                instruments=outcomes,
+            )
             if once:
                 return
             await asyncio.sleep(30)
