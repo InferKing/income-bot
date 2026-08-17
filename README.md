@@ -69,8 +69,11 @@ cp .env.example .env
 
 ```env
 INCOME_TG_BOT_TOKEN=токен_от_BotFather
+INCOME_TG_TELEGRAM_PROXY_URL=socks5://172.17.0.1:1080
 INCOME_TG_TELEGRAM_OWNER_ID=1
 ```
+
+`INCOME_TG_TELEGRAM_PROXY_URL` необязателен и применяется только к Telegram API. Оставьте его пустым, если сервер подключается к Telegram напрямую.
 
 ### 3. Настроить пароль PostgreSQL
 
@@ -120,6 +123,8 @@ docker compose up --build -d
 ```
 
 Compose поднимает PostgreSQL, Telegram-бота, Bybit/OKX collectors, feature worker, scheduler переобучения, trading worker и readiness sidecar.
+
+Bybit collector получает BTC, ETH и TON. Для OKX perpetual используются только BTC и ETH, потому что у OKX нет инструмента `TON-USDT-SWAP`.
 
 ### 6. Проверить состояние
 

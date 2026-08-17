@@ -92,7 +92,6 @@ services:
       - --symbols
       - BTC
       - ETH
-      - TON
     depends_on:
       postgres:
         condition: service_healthy

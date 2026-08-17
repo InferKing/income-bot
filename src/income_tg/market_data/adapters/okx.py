@@ -177,16 +177,21 @@ class OkxAdapter(MarketDataAdapter):
             for row in data:
                 if not isinstance(row, Mapping):
                     continue
+                is_snapshot = payload.get("action", "snapshot") == "snapshot"
+                previous_sequence = (
+                    int(row["prevSeqId"]) if row.get("prevSeqId") is not None else None
+                )
+                # OKX marks the missing predecessor of a snapshot with -1.
+                if is_snapshot and previous_sequence == -1:
+                    previous_sequence = None
                 yield OrderBookUpdate(
                     instrument=instrument,
                     occurred_at=utc_from_milliseconds(row["ts"]),
                     bids=levels(row.get("bids", [])),
                     asks=levels(row.get("asks", [])),
                     sequence=int(row.get("seqId", 0)),
-                    previous_sequence=(
-                        int(row["prevSeqId"]) if row.get("prevSeqId") is not None else None
-                    ),
-                    is_snapshot=payload.get("action", "snapshot") == "snapshot",
+                    previous_sequence=previous_sequence,
+                    is_snapshot=is_snapshot,
                     source=DataSource.OKX,
                 )
 

@@ -1,16 +1,41 @@
 from __future__ import annotations
 
+from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 from uuid import UUID
 
 from aiogram import F, Router
+from aiogram.exceptions import TelegramBadRequest
 from aiogram.filters import Command, CommandStart
-from aiogram.types import Message
+from aiogram.types import CallbackQuery, InlineKeyboardMarkup, Message
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from income_tg.bot.keyboards import main_keyboard
-from income_tg.bot.presenters import render_portfolios
+from income_tg.bot.keyboards import (
+    BUY_BUTTON,
+    DEPOSIT_BUTTON,
+    HELP_BUTTON,
+    PORTFOLIOS_BUTTON,
+    RECONCILE_BUTTON,
+    RISK_BUTTON,
+    SELL_BUTTON,
+    SIGNALS_BUTTON,
+    STATISTICS_BUTTON,
+    SYSTEM_BUTTON,
+    WITHDRAW_BUTTON,
+    command_example_keyboard,
+    help_keyboard,
+    main_keyboard,
+    operations_help_keyboard,
+    system_help_keyboard,
+    system_keyboard,
+)
+from income_tg.bot.presenters import (
+    SystemHealthItem,
+    SystemModelInfo,
+    render_portfolios,
+    render_system_status,
+)
 from income_tg.common.enums import PortfolioKind, TradeSide
 from income_tg.common.money import (
     MoneyValidationError,
@@ -24,6 +49,9 @@ from income_tg.risk.settings import RiskSettingsService
 from income_tg.storage.models import Portfolio
 from income_tg.storage.trading_models import (
     EquityPointRecord,
+    FeatureVectorRecord,
+    InstrumentRecord,
+    MarketCandleRecord,
     ModelVersionRecord,
     ServiceHealthRecord,
     SignalRecord,
@@ -31,29 +59,77 @@ from income_tg.storage.trading_models import (
 
 router = Router(name="owner")
 
-HELP_TEXT = """<b>Доступные команды</b>
+HELP_TEXT = """❓ <b>Помощь</b>
 
-<code>/portfolio</code> — показать оба портфеля
-<code>/deposit USDT 100</code> — внести пополнение реального портфеля
-<code>/withdraw USDT 25</code> — внести вывод
-<code>/buy BTC USDT 0.001 60000 0.06</code> — покупка; последняя величина — комиссия
-<code>/sell BTC USDT 0.001 65000 0.065</code> — продажа
-<code>/reconcile BTC=0.01 USDT=500 RUB=1000</code> — заменить текущие остатки снимком
-<code>/signals</code> — последние сигналы
-<code>/risk</code> — текущие лимиты риска
-<code>/setrisk max_leverage 10</code> — изменить лимит
-<code>/status</code> — состояние сервисов
-<code>/id</code> — показать ваш Telegram ID
+Выберите раздел ниже — бот сразу откроет нужный экран.
 
-В <code>/reconcile</code> неуказанные ранее существовавшие активы будут обнулены.
-Все операции относятся к реальному Crypto Wallet.
-Виртуальный портфель изменяет только paper-trading движок."""
+💼 <b>Портфели</b> — реальные и виртуальные остатки
+📈 <b>Сигналы</b> — последние торговые идеи
+📊 <b>Статистика</b> — результаты paper trading
+🛡️ <b>Риск</b> — действующие ограничения
+➕ <b>Операции</b> — пополнение, вывод, покупка и продажа
+🔄 <b>Сверка</b> — замена остатков полным снимком
+🖥️ <b>Система</b> — сервисы, модель и свежесть данных
+
+<i>Команды с параметрами можно скопировать одной кнопкой.</i>"""
+
+OPERATIONS_HELP_TEXT = """➕ <b>Операции с реальным портфелем</b>
+
+Выберите действие. Бот покажет готовый пример команды и кнопку копирования.
+
+⚠️ Эти команды меняют только ручной Crypto Wallet.
+Paper-портфель управляется торговым движком отдельно."""
+
+SYSTEM_HELP_TEXT = """🖥️ <b>Как читать состояние системы</b>
+
+🟢 — компонент работает, heartbeat свежий
+🟡 — работа продолжается, но компонент ещё не полностью готов
+🔴 — heartbeat устарел или обнаружена ошибка
+
+<b>Champion-модель</b> — модель, допущенная к созданию сигналов.
+После чистого запуска она появится не сразу: системе нужно накопить размеченные данные
+и пройти проверку качества.
+
+<b>Векторы признаков</b> показывают, что рыночные данные поступают и обрабатываются."""
+
+OPERATION_HELP: dict[str, tuple[str, str, str]] = {
+    "deposit": (
+        "➕ <b>Пополнение</b>",
+        "/deposit USDT 100",
+        "Добавляет указанную сумму к реальному портфелю.",
+    ),
+    "withdraw": (
+        "➖ <b>Вывод</b>",
+        "/withdraw USDT 25",
+        "Вычитает указанную сумму из реального портфеля.",
+    ),
+    "buy": (
+        "🟢 <b>Покупка</b>",
+        "/buy BTC USDT 0.001 60000 0.06",
+        "Формат: актив, валюта расчёта, количество, цена и необязательная комиссия.",
+    ),
+    "sell": (
+        "🔴 <b>Продажа</b>",
+        "/sell BTC USDT 0.001 65000 0.065",
+        "Формат: актив, валюта расчёта, количество, цена и необязательная комиссия.",
+    ),
+    "reconcile": (
+        "🔄 <b>Сверка остатков</b>",
+        "/reconcile BTC=0.01 USDT=500 RUB=1000",
+        "Полностью заменяет снимок остатков. Неуказанные существующие активы будут обнулены.",
+    ),
+}
 
 
 @router.message(CommandStart())
 async def start(message: Message) -> None:
     await message.answer(
-        "Бот запущен. Реальный Crypto Wallet ведется вручную, виртуальный портфель изолирован.",
+        "👋 <b>Income Bot готов к работе</b>\n\n"
+        "Здесь можно вести ручной Crypto Wallet, следить за рыночными сигналами и "
+        "наблюдать за paper-trading стратегией.\n\n"
+        "💼 Реальный портфель изменяется только вашими командами.\n"
+        "🧪 Виртуальный портфель полностью изолирован и управляется ботом.\n\n"
+        "Выберите действие на клавиатуре ниже.",
         reply_markup=main_keyboard(),
     )
 
@@ -67,39 +143,58 @@ async def telegram_id(message: Message) -> None:
 
 
 @router.message(Command("help"))
-@router.message(F.text == "Помощь")
-@router.message(F.text == "Добавить операцию")
+@router.message(F.text.in_({"Помощь", HELP_BUTTON}))
 async def help_message(message: Message) -> None:
-    await message.answer(HELP_TEXT, reply_markup=main_keyboard())
+    await message.answer(HELP_TEXT, reply_markup=help_keyboard())
 
 
-@router.message(F.text == "Сверить остатки")
+@router.message(F.text == "Добавить операцию")
+async def operations_help(message: Message) -> None:
+    await message.answer(OPERATIONS_HELP_TEXT, reply_markup=operations_help_keyboard())
+
+
+@router.message(F.text == DEPOSIT_BUTTON)
+async def deposit_help(message: Message) -> None:
+    await _send_operation_help(message, "deposit")
+
+
+@router.message(F.text == WITHDRAW_BUTTON)
+async def withdraw_help(message: Message) -> None:
+    await _send_operation_help(message, "withdraw")
+
+
+@router.message(F.text == BUY_BUTTON)
+async def buy_help(message: Message) -> None:
+    await _send_operation_help(message, "buy")
+
+
+@router.message(F.text == SELL_BUTTON)
+async def sell_help(message: Message) -> None:
+    await _send_operation_help(message, "sell")
+
+
+@router.message(F.text.in_({"Сверить остатки", RECONCILE_BUTTON}))
 async def reconcile_help(message: Message) -> None:
-    await message.answer(
-        "Отправьте полный снимок остатков, например:\n"
-        "<code>/reconcile BTC=0.01 USDT=500 RUB=1000</code>\n\n"
-        "Активы, которые были в портфеле, но отсутствуют в снимке, будут обнулены.",
-        reply_markup=main_keyboard(),
-    )
+    await _send_operation_help(message, "reconcile")
 
 
 @router.message(Command("portfolio"))
-@router.message(F.text == "Портфели")
+@router.message(F.text.in_({"Портфели", PORTFOLIOS_BUTTON}))
 async def portfolio_summary(
     message: Message,
     session: AsyncSession,
     settings: Settings,
 ) -> None:
-    service, user_id = await _service_and_user(message, session)
-    portfolios = await service.list_balances(user_id)
+    if message.from_user is None:
+        raise PortfolioError("Не удалось определить пользователя")
     await message.answer(
-        render_portfolios(portfolios, settings.manual_usdt_rub_rate),
+        await _portfolio_text(message.from_user.id, session, settings),
         reply_markup=main_keyboard(),
     )
 
 
 @router.message(Command("signals"))
-@router.message(F.text == "Сигналы")
+@router.message(F.text.in_({"Сигналы", SIGNALS_BUTTON}))
 async def signals_history(message: Message, session: AsyncSession) -> None:
     records = list(
         await session.scalars(
@@ -107,19 +202,29 @@ async def signals_history(message: Message, session: AsyncSession) -> None:
         )
     )
     if not records:
-        await message.answer("Сигналы еще не формировались.")
+        await message.answer(
+            "📈 <b>Сигналы</b>\n\n"
+            "⏳ Сигналов пока нет. Это нормально после первого запуска: бот накапливает "
+            "данные и готовит champion-модель."
+        )
         return
-    lines = ["<b>Последние сигналы</b>"]
+    lines = ["📈 <b>Последние сигналы</b>", "<i>До 10 последних решений модели.</i>", ""]
     for record in records:
+        action_icon = {"BUY": "🟢", "SELL": "🔴", "HOLD": "⚪"}.get(record.action, "🔹")
+        status_label = {
+            "APPROVED": "одобрен",
+            "REJECTED": "отклонён",
+            "PENDING": "ожидает",
+        }.get(record.status, record.status.lower())
         lines.append(
-            f"• {record.action} · {record.status} · {record.confidence:.0%} · "
-            f"<code>{record.reference_price}</code>"
+            f"{action_icon} <b>{record.action}</b> · {status_label}\n"
+            f"   уверенность {record.confidence:.0%} · цена <code>{record.reference_price}</code>"
         )
     await message.answer("\n".join(lines))
 
 
 @router.message(Command("stats"))
-@router.message(F.text == "Статистика")
+@router.message(F.text.in_({"Статистика", STATISTICS_BUTTON}))
 async def statistics(message: Message, session: AsyncSession) -> None:
     signals_total = await session.scalar(select(func.count()).select_from(SignalRecord)) or 0
     approved = (
@@ -132,38 +237,47 @@ async def statistics(message: Message, session: AsyncSession) -> None:
         select(EquityPointRecord).order_by(EquityPointRecord.observed_at.desc()).limit(1)
     )
     lines = [
-        "<b>Статистика</b>",
-        f"Сигналов: {signals_total}",
-        f"Одобрено риск-модулем: {approved}",
+        "📊 <b>Статистика paper trading</b>",
+        "",
+        f"📈 Сигналов: <b>{signals_total}</b>",
+        f"✅ Одобрено риск-модулем: <b>{approved}</b>",
     ]
     if equity is not None:
         lines.extend(
             (
-                f"Paper equity: <code>{equity.equity_usdt}</code> USDT",
-                f"≈ <code>{equity.equity_rub}</code> RUB",
-                f"Просадка: {equity.drawdown_fraction:.2%}",
+                "",
+                f"💰 Equity: <code>{equity.equity_usdt}</code> USDT",
+                f"💵 Оценка: <code>{equity.equity_rub}</code> RUB",
+                f"📉 Текущая просадка: <b>{equity.drawdown_fraction:.2%}</b>",
             )
         )
     else:
-        lines.append("Кривая капитала появится после запуска paper trading.")
+        lines.extend(("", "⏳ Кривая капитала появится после первых paper-сделок."))
     await message.answer("\n".join(lines))
 
 
 @router.message(Command("risk"))
-@router.message(F.text == "Риск")
+@router.message(F.text.in_({"Риск", RISK_BUTTON}))
 async def risk_settings(message: Message, session: AsyncSession) -> None:
-    _, user_id = await _service_and_user(message, session)
+    if message.from_user is None:
+        raise PortfolioError("Не удалось определить пользователя")
+    await message.answer(await _risk_text(message.from_user.id, session))
+
+
+async def _risk_text(telegram_user_id: int, session: AsyncSession) -> str:
+    _, user_id = await _service_and_telegram_user(telegram_user_id, session)
     profile = await RiskSettingsService(session).get(user_id)
-    await message.answer(
-        "<b>Настройки риска</b>\n"
-        f"Маржа позиции: {profile.max_margin_fraction:.1%}\n"
-        f"Риск по стопу: {profile.max_stop_risk_fraction:.1%}\n"
-        f"Дневная потеря: {profile.max_daily_loss_fraction:.1%}\n"
-        f"Максимальная просадка: {profile.max_drawdown_fraction:.1%}\n"
-        f"Открытых позиций: {profile.max_open_positions}\n"
-        f"Максимальное плечо: {profile.max_leverage}x\n"
-        f"Порог сигнала: {profile.min_signal_confidence:.0%}\n\n"
-        "Изменение: <code>/setrisk max_leverage 10</code>"
+    return (
+        "🛡️ <b>Контроль риска</b>\n"
+        "<i>Эти ограничения проверяются перед каждой paper-сделкой.</i>\n\n"
+        f"💼 Маржа одной позиции: <b>{profile.max_margin_fraction:.1%}</b>\n"
+        f"🛑 Риск по стопу: <b>{profile.max_stop_risk_fraction:.1%}</b>\n"
+        f"📅 Лимит потерь за день: <b>{profile.max_daily_loss_fraction:.1%}</b>\n"
+        f"📉 Максимальная просадка: <b>{profile.max_drawdown_fraction:.1%}</b>\n"
+        f"📚 Открытых позиций: <b>{profile.max_open_positions}</b>\n"
+        f"⚙️ Максимальное плечо: <b>{profile.max_leverage}x</b>\n"
+        f"🎯 Порог уверенности: <b>{profile.min_signal_confidence:.0%}</b>\n\n"
+        "Пример изменения: <code>/setrisk max_leverage 10</code>"
     )
 
 
@@ -184,8 +298,115 @@ async def set_risk(message: Message, session: AsyncSession) -> None:
 
 
 @router.message(Command("status"))
-@router.message(F.text == "Система")
-async def system_status(message: Message, session: AsyncSession) -> None:
+@router.message(F.text.in_({"Система", SYSTEM_BUTTON}))
+async def system_status(
+    message: Message,
+    session: AsyncSession,
+    settings: Settings,
+) -> None:
+    text = await _system_status_text(session, settings)
+    await message.answer(text, reply_markup=system_keyboard())
+
+
+@router.callback_query(F.data == "system:refresh")
+async def refresh_system_status(
+    callback: CallbackQuery,
+    session: AsyncSession,
+    settings: Settings,
+) -> None:
+    message = _callback_message(callback)
+    if message is None:
+        await callback.answer("Сообщение больше недоступно", show_alert=True)
+        return
+    text = await _system_status_text(session, settings)
+    try:
+        await message.edit_text(text, reply_markup=system_keyboard())
+        await callback.answer("Состояние обновлено")
+    except TelegramBadRequest as error:
+        if "message is not modified" not in str(error).lower():
+            raise
+        await callback.answer("Данные уже актуальны")
+
+
+@router.callback_query(F.data == "help:main")
+async def show_help_callback(callback: CallbackQuery) -> None:
+    await _edit_callback(callback, HELP_TEXT, help_keyboard())
+
+
+@router.callback_query(F.data == "help:operations")
+async def show_operations_callback(callback: CallbackQuery) -> None:
+    await _edit_callback(callback, OPERATIONS_HELP_TEXT, operations_help_keyboard())
+
+
+@router.callback_query(F.data == "help:system")
+async def show_system_help_callback(callback: CallbackQuery) -> None:
+    await _edit_callback(callback, SYSTEM_HELP_TEXT, system_help_keyboard())
+
+
+@router.callback_query(F.data.startswith("help:"))
+async def show_operation_callback(callback: CallbackQuery) -> None:
+    operation = (callback.data or "").partition(":")[2]
+    details = OPERATION_HELP.get(operation)
+    if details is None:
+        await callback.answer("Раздел не найден", show_alert=True)
+        return
+    title, command, description = details
+    text = f"{title}\n\n{description}\n\n<code>{command}</code>"
+    await _edit_callback(callback, text, command_example_keyboard(command))
+
+
+@router.callback_query(F.data == "menu:portfolio")
+async def open_portfolio_callback(
+    callback: CallbackQuery,
+    session: AsyncSession,
+    settings: Settings,
+) -> None:
+    message = _callback_message(callback)
+    await callback.answer()
+    if message is not None:
+        await message.answer(
+            await _portfolio_text(callback.from_user.id, session, settings),
+            reply_markup=main_keyboard(),
+        )
+
+
+@router.callback_query(F.data == "menu:signals")
+async def open_signals_callback(callback: CallbackQuery, session: AsyncSession) -> None:
+    message = _callback_message(callback)
+    await callback.answer()
+    if message is not None:
+        await signals_history(message, session)
+
+
+@router.callback_query(F.data == "menu:stats")
+async def open_statistics_callback(callback: CallbackQuery, session: AsyncSession) -> None:
+    message = _callback_message(callback)
+    await callback.answer()
+    if message is not None:
+        await statistics(message, session)
+
+
+@router.callback_query(F.data == "menu:risk")
+async def open_risk_callback(callback: CallbackQuery, session: AsyncSession) -> None:
+    message = _callback_message(callback)
+    await callback.answer()
+    if message is not None:
+        await message.answer(await _risk_text(callback.from_user.id, session))
+
+
+@router.callback_query(F.data == "menu:status")
+async def open_system_callback(
+    callback: CallbackQuery,
+    session: AsyncSession,
+    settings: Settings,
+) -> None:
+    message = _callback_message(callback)
+    await callback.answer()
+    if message is not None:
+        await system_status(message, session, settings)
+
+
+async def _system_status_text(session: AsyncSession, settings: Settings) -> str:
     health = list(await session.scalars(select(ServiceHealthRecord)))
     champion = await session.scalar(
         select(ModelVersionRecord)
@@ -193,13 +414,82 @@ async def system_status(message: Message, session: AsyncSession) -> None:
         .order_by(ModelVersionRecord.activated_at.desc())
         .limit(1)
     )
-    lines = ["<b>Состояние системы</b>"]
-    if health:
-        lines.extend(f"• {item.service}/{item.instance_id}: {item.status}" for item in health)
-    else:
-        lines.append("Health-события еще не поступали.")
-    lines.append(f"Модель: {champion.version if champion else 'champion еще не назначен'}")
-    await message.answer("\n".join(lines))
+    feature_vectors = (
+        await session.scalar(select(func.count()).select_from(FeatureVectorRecord)) or 0
+    )
+    latest_feature_at = await session.scalar(select(func.max(FeatureVectorRecord.as_of)))
+    training_vectors = 0
+    labeled_training_vectors = 0
+    training_instrument = await session.scalar(
+        select(InstrumentRecord).where(
+            InstrumentRecord.canonical_symbol == "BTC/USDT",
+            InstrumentRecord.market_type == "linear_perpetual",
+        )
+    )
+    if training_instrument is not None:
+        training_vectors = int(
+            await session.scalar(
+                select(func.count())
+                .select_from(FeatureVectorRecord)
+                .where(
+                    FeatureVectorRecord.instrument_id == training_instrument.id,
+                    FeatureVectorRecord.horizon == "15m",
+                )
+            )
+            or 0
+        )
+        latest_primary_candle = await session.scalar(
+            select(func.max(MarketCandleRecord.opened_at)).where(
+                MarketCandleRecord.instrument_id == training_instrument.id,
+                MarketCandleRecord.provider == "bybit",
+                MarketCandleRecord.interval_seconds == 60,
+                MarketCandleRecord.is_closed.is_(True),
+            )
+        )
+        if latest_primary_candle is not None:
+            label_cutoff = latest_primary_candle + timedelta(minutes=1) - timedelta(minutes=15)
+            labeled_training_vectors = int(
+                await session.scalar(
+                    select(func.count())
+                    .select_from(FeatureVectorRecord)
+                    .where(
+                        FeatureVectorRecord.instrument_id == training_instrument.id,
+                        FeatureVectorRecord.horizon == "15m",
+                        FeatureVectorRecord.as_of <= label_cutoff,
+                    )
+                )
+                or 0
+            )
+    signals = await session.scalar(select(func.count()).select_from(SignalRecord)) or 0
+    health_items = [
+        SystemHealthItem(
+            service=item.service,
+            instance_id=item.instance_id,
+            status=item.status,
+            code=_health_code(item.details),
+            heartbeat_at=item.last_heartbeat_at,
+        )
+        for item in health
+    ]
+    model = (
+        SystemModelInfo(version=champion.version, activated_at=champion.activated_at)
+        if champion is not None
+        else None
+    )
+    return render_system_status(
+        health_items,
+        model=model,
+        feature_vectors=feature_vectors,
+        training_vectors=training_vectors,
+        labeled_training_vectors=labeled_training_vectors,
+        signals=signals,
+        latest_feature_at=latest_feature_at,
+        environment=settings.environment,
+        paper_only=settings.paper_only,
+        market_sources=settings.market_sources,
+        symbols=settings.symbols,
+        now=datetime.now(UTC),
+    )
 
 
 @router.message(Command("deposit"))
@@ -322,11 +612,28 @@ async def _service_and_user(
 ) -> tuple[PortfolioService, UUID]:
     if message.from_user is None:
         raise PortfolioError("Не удалось определить пользователя")
+    return await _service_and_telegram_user(message.from_user.id, session)
+
+
+async def _service_and_telegram_user(
+    telegram_user_id: int,
+    session: AsyncSession,
+) -> tuple[PortfolioService, UUID]:
     service = PortfolioService(session)
-    user = await service.get_owner(message.from_user.id)
+    user = await service.get_owner(telegram_user_id)
     if user is None:
         raise PortfolioError("Владелец не инициализирован")
     return service, user.id
+
+
+async def _portfolio_text(
+    telegram_user_id: int,
+    session: AsyncSession,
+    settings: Settings,
+) -> str:
+    service, user_id = await _service_and_telegram_user(telegram_user_id, session)
+    portfolios = await service.list_balances(user_id)
+    return render_portfolios(portfolios, settings.manual_usdt_rub_rate)
 
 
 async def _real_portfolio(
@@ -345,3 +652,38 @@ def _command_arguments(message: Message) -> list[str]:
 def _message_idempotency_key(message: Message) -> str:
     chat_id = message.chat.id
     return f"telegram:{chat_id}:{message.message_id}"
+
+
+async def _send_operation_help(message: Message, operation: str) -> None:
+    title, command, description = OPERATION_HELP[operation]
+    await message.answer(
+        f"{title}\n\n{description}\n\n<code>{command}</code>",
+        reply_markup=command_example_keyboard(command),
+    )
+
+
+async def _edit_callback(
+    callback: CallbackQuery,
+    text: str,
+    reply_markup: InlineKeyboardMarkup,
+) -> None:
+    message = _callback_message(callback)
+    if message is None:
+        await callback.answer("Сообщение больше недоступно", show_alert=True)
+        return
+    try:
+        await message.edit_text(text, reply_markup=reply_markup)
+        await callback.answer()
+    except TelegramBadRequest as error:
+        if "message is not modified" not in str(error).lower():
+            raise
+        await callback.answer("Этот раздел уже открыт")
+
+
+def _callback_message(callback: CallbackQuery) -> Message | None:
+    return callback.message if isinstance(callback.message, Message) else None
+
+
+def _health_code(details: dict[str, object]) -> str:
+    code = details.get("code")
+    return code if isinstance(code, str) else "UNKNOWN"
