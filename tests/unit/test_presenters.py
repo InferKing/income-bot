@@ -25,6 +25,7 @@ def test_portfolio_presenter_converts_cash_with_manual_rate() -> None:
     assert "100000" in text
     assert "1000" in text
     assert "USDT" in text
+    assert "курс <code>100</code> RUB/USDT" in text
 
 
 def test_system_presenter_explains_learning_state_and_freshness() -> None:

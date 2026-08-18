@@ -50,6 +50,7 @@ from income_tg.storage.models import Portfolio
 from income_tg.storage.trading_models import (
     EquityPointRecord,
     FeatureVectorRecord,
+    FxRateRecord,
     InstrumentRecord,
     MarketCandleRecord,
     ModelVersionRecord,
@@ -633,7 +634,14 @@ async def _portfolio_text(
 ) -> str:
     service, user_id = await _service_and_telegram_user(telegram_user_id, session)
     portfolios = await service.list_balances(user_id)
-    return render_portfolios(portfolios, settings.manual_usdt_rub_rate)
+    market_rate = await session.scalar(
+        select(FxRateRecord.rate)
+        .where(FxRateRecord.base == "USDT", FxRateRecord.quote == "RUB")
+        .order_by(FxRateRecord.observed_at.desc())
+        .limit(1)
+    )
+    rate = market_rate if market_rate is not None else settings.manual_usdt_rub_rate
+    return render_portfolios(portfolios, rate)
 
 
 async def _real_portfolio(

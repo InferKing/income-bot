@@ -49,11 +49,13 @@ def _render_cash_conversion(
     result: list[str] = []
     if rub:
         result.append(
-            f"≈ <code>{format_decimal(rub / manual_usdt_rub_rate)}</code> USDT по ручному курсу"
+            f"≈ <code>{format_decimal(rub / manual_usdt_rub_rate)}</code> USDT "
+            f"(курс <code>{format_decimal(manual_usdt_rub_rate)}</code> RUB/USDT)"
         )
     if usdt:
         result.append(
-            f"≈ <code>{format_decimal(usdt * manual_usdt_rub_rate)}</code> RUB по ручному курсу"
+            f"≈ <code>{format_decimal(usdt * manual_usdt_rub_rate)}</code> RUB "
+            f"(курс <code>{format_decimal(manual_usdt_rub_rate)}</code> RUB/USDT)"
         )
     return result
 
