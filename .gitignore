@@ -12,6 +12,7 @@ dist/
 build/
 .idea/
 .vscode/
+.deploy/
 models/*
 !models/.gitkeep
 backups/*
