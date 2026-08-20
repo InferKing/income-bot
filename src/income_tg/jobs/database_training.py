@@ -9,6 +9,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from income_tg.jobs.retraining import CandidateAssessment, RetrainingOutcome, RetrainingWorkflow
 from income_tg.models.dataset import LabeledDataset, chronological_train_test, load_labeled_dataset
+from income_tg.models.evaluation import AdmissionCriteria
 from income_tg.models.inference import EnsembleModel
 from income_tg.models.registry import FileModelRegistry
 from income_tg.models.training import train_ensemble
@@ -82,6 +83,7 @@ class DatabaseCandidateEvaluator:
             max_drawdown=challenger_metrics.max_drawdown,
             profit_factor=challenger_metrics.profit_factor,
             closed_trades=challenger_metrics.trades,
+            test_samples=len(test.dataset.timestamps),
             beats_baseline=challenger_metrics.net_return > 0.0,
             recent_period_stable=challenger_metrics.recent_return >= 0,
             beats_champion=challenger_metrics.net_return > champion_return,
@@ -97,11 +99,13 @@ class PersistedRetrainingWorkflow:
         session_factory: async_sessionmaker[AsyncSession],
         registry: FileModelRegistry,
         target: TrainingTarget,
+        criteria: AdmissionCriteria | None = None,
     ) -> None:
         self._delegate = delegate
         self._session_factory = session_factory
         self._registry = registry
         self._target = target
+        self._criteria = criteria or AdmissionCriteria()
 
     async def run(self) -> RetrainingOutcome:
         started_at = datetime.now(UTC)
@@ -132,12 +136,17 @@ class PersistedRetrainingWorkflow:
                     "horizon_seconds": int(self._target.horizon_duration.total_seconds()),
                     "confidence_threshold": self._target.confidence_threshold,
                     "round_trip_cost": self._target.round_trip_cost,
+                    "min_closed_trade_fraction": self._criteria.min_closed_trade_fraction,
                 },
                 metrics={
                     "net_return": outcome.assessment.net_return,
                     "max_drawdown": outcome.assessment.max_drawdown,
                     "profit_factor": outcome.assessment.profit_factor,
                     "closed_trades": outcome.assessment.closed_trades,
+                    "test_samples": outcome.assessment.test_samples,
+                    "closed_trade_fraction": (
+                        outcome.assessment.closed_trades / outcome.assessment.test_samples
+                    ),
                     "admission_reasons": list(outcome.decision.reasons),
                 },
                 error_message=outcome.rollback_reason,

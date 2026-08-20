@@ -25,6 +25,7 @@ from income_tg.jobs.retraining import (
 from income_tg.jobs.scheduler import AsyncScheduler
 from income_tg.jobs.store import JsonJobStore
 from income_tg.logging import configure_logging
+from income_tg.models.evaluation import AdmissionCriteria
 from income_tg.models.inference import EnsembleModel
 from income_tg.models.registry import FileModelRegistry
 from income_tg.storage.database import Database
@@ -44,18 +45,21 @@ async def run(args: argparse.Namespace) -> None:
             horizon_duration=timedelta(minutes=args.horizon_minutes),
         )
         registry = FileModelRegistry(args.model_dir)
+        criteria = AdmissionCriteria()
         base_workflow = RetrainingWorkflow(
             trainer=DatabaseCandidateTrainer(database.session_factory, target),
             evaluator=DatabaseCandidateEvaluator(database.session_factory, target),
             registry=registry,
             activator=FileModelActivator(registry),
             activation_check=_activation_check,
+            criteria=criteria,
         )
         workflow = PersistedRetrainingWorkflow(
             base_workflow,
             database.session_factory,
             registry,
             target,
+            criteria,
         )
         if args.run_once:
             await workflow.run()

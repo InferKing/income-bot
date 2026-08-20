@@ -58,6 +58,7 @@ def test_probability_metrics_and_admission() -> None:
         max_drawdown=0.1,
         profit_factor=1.5,
         closed_trades=120,
+        test_samples=500,
         beats_baseline=True,
         recent_period_stable=True,
     )
@@ -71,12 +72,37 @@ def test_admission_rejects_non_finite_metrics(invalid: float) -> None:
         max_drawdown=invalid,
         profit_factor=invalid,
         closed_trades=120,
+        test_samples=500,
         beats_baseline=True,
         beats_champion=True,
         recent_period_stable=True,
     )
     assert decision.accepted is False
     assert decision.reasons == ("INVALID_METRICS",)
+
+
+def test_admission_requires_twenty_percent_of_test_samples() -> None:
+    accepted = evaluate_admission(
+        net_return=0.2,
+        max_drawdown=0.1,
+        profit_factor=1.5,
+        closed_trades=32,
+        test_samples=159,
+        beats_baseline=True,
+        recent_period_stable=True,
+    )
+    rejected = evaluate_admission(
+        net_return=0.2,
+        max_drawdown=0.1,
+        profit_factor=1.5,
+        closed_trades=31,
+        test_samples=159,
+        beats_baseline=True,
+        recent_period_stable=True,
+    )
+
+    assert accepted.accepted is True
+    assert rejected.reasons == ("NOT_ENOUGH_TRADES",)
 
 
 def test_probability_metrics_rejects_non_finite_probability() -> None:
