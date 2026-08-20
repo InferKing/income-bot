@@ -25,6 +25,21 @@ class SystemModelInfo:
     activated_at: datetime | None
 
 
+@dataclass(frozen=True, slots=True)
+class SystemTrainingInfo:
+    attempt_count: int
+    status: str
+    started_at: datetime
+    finished_at: datetime | None
+    next_attempt_at: datetime | None
+    net_return: Decimal | None
+    max_drawdown: Decimal | None
+    profit_factor: Decimal | None
+    closed_trades: int | None
+    required_closed_trades: int
+    admission_reasons: tuple[str, ...]
+
+
 def render_portfolios(portfolios: list[PortfolioBalance], manual_usdt_rub_rate: Decimal) -> str:
     parts = ["💼 <b>Портфели</b>", "<i>Ручной и paper-trading балансы хранятся отдельно.</i>"]
     for portfolio in portfolios:
@@ -64,6 +79,7 @@ def render_system_status(
     health: Sequence[SystemHealthItem],
     *,
     model: SystemModelInfo | None,
+    training: SystemTrainingInfo | None,
     feature_vectors: int,
     training_vectors: int,
     labeled_training_vectors: int,
@@ -85,7 +101,11 @@ def render_system_status(
     if not health:
         headline = "⚪ <b>Состояние пока неизвестно</b>"
     elif unhealthy_services <= {"MODEL"} and model is None:
-        headline = "🟡 <b>Сервисы работают, модель обучается</b>"
+        headline = (
+            "🟡 <b>Сервисы работают, champion ещё не принят</b>"
+            if training is not None
+            else "🟡 <b>Сервисы работают, модель обучается</b>"
+        )
     elif unhealthy_services:
         headline = "🔴 <b>Часть системы требует внимания</b>"
     else:
@@ -105,6 +125,9 @@ def render_system_status(
     else:
         activated = _format_timestamp(model.activated_at) if model.activated_at else "не указано"
         lines.append(f"🧠 Champion: <code>{escape(model.version)}</code> · {activated}")
+    if training is not None:
+        lines.extend(("", *_render_training(training)))
+
     latest = _format_timestamp(latest_feature_at) if latest_feature_at else "пока нет"
     champion_target = 500
     progress_percent = min(100, labeled_training_vectors * 100 // champion_target)
@@ -117,7 +140,7 @@ def render_system_status(
                 f"<b>{labeled_training_vectors}</b> размечено из {training_vectors} · "
                 f"<code>{progress}</code> {progress_percent}%"
             ),
-            _training_progress_hint(labeled_training_vectors, champion_target),
+            _training_progress_hint(labeled_training_vectors, champion_target, training),
             f"📈 Сигналов сформировано: <b>{signals}</b>",
             "",
             "<b>Конфигурация</b>",
@@ -137,7 +160,11 @@ def _progress_bar(percent: int) -> str:
     return "█" * filled + "░" * (10 - filled)
 
 
-def _training_progress_hint(labeled: int, champion_target: int) -> str:
+def _training_progress_hint(
+    labeled: int,
+    champion_target: int,
+    training: SystemTrainingInfo | None,
+) -> str:
     if labeled < 40:
         return f"<i>До первого обучения: ещё {40 - labeled}. Ориентир для champion — 500+.</i>"
     if labeled < champion_target:
@@ -145,7 +172,67 @@ def _training_progress_hint(labeled: int, champion_target: int) -> str:
             "<i>Обучение уже доступно; до минимальной полноценной проверки "
             f"ещё около {champion_target - labeled}.</i>"
         )
-    return "<i>Данных достаточно для полноценной проверки; кандидат проходит критерии качества.</i>"
+    if training is not None and training.status == "REJECTED":
+        return "<i>Данных достаточно для обучения; последний кандидат отклонён по метрикам.</i>"
+    return "<i>Данных достаточно для полноценной проверки кандидата.</i>"
+
+
+def _render_training(training: SystemTrainingInfo) -> list[str]:
+    status_icon, status_label = {
+        "PROMOTED": ("✅", "кандидат назначен champion"),
+        "REJECTED": ("❌", "кандидат отклонён"),
+        "ROLLED_BACK": ("⚠️", "активация отменена"),
+    }.get(training.status, ("⚪", training.status.lower()))
+    attempted_at = training.finished_at or training.started_at
+    closed_trades = training.closed_trades if training.closed_trades is not None else "—"
+    lines = [
+        "<b>Последняя попытка обучения</b>",
+        f"🕒 {_format_timestamp(attempted_at)}",
+        f"{status_icon} Статус: <b>{escape(status_label)}</b>",
+        f"🔁 Попыток: <b>{training.attempt_count}</b>",
+        "",
+        "<b>Метрики кандидата</b>",
+        f"• Доходность: {_format_percent(training.net_return)}",
+        (
+            f"• Сделок: <b>{closed_trades}</b> "
+            f"из необходимых <b>{training.required_closed_trades}</b>"
+        ),
+        f"• Profit factor: {_format_metric(training.profit_factor)}",
+        f"• Max drawdown: {_format_percent(training.max_drawdown)}",
+    ]
+    if training.admission_reasons:
+        lines.extend(("", "<b>Причины отклонения</b>"))
+        lines.extend(f"• {_admission_reason(reason)}" for reason in training.admission_reasons)
+    if training.next_attempt_at is not None and training.status != "PROMOTED":
+        next_attempt = _format_timestamp(training.next_attempt_at)
+        lines.extend(("", f"⏱ Следующая попытка: около {next_attempt}"))
+    return lines
+
+
+def _format_percent(value: Decimal | None) -> str:
+    if value is None:
+        return "—"
+    percent = (value * Decimal("100")).quantize(Decimal("0.01"))
+    return f"<code>{format_decimal(percent)}</code>%"
+
+
+def _format_metric(value: Decimal | None) -> str:
+    if value is None:
+        return "—"
+    return f"<code>{format_decimal(value.quantize(Decimal('0.01')))}</code>"
+
+
+def _admission_reason(reason: str) -> str:
+    return {
+        "NET_RETURN_NOT_POSITIVE": "доходность не положительная",
+        "MAX_DRAWDOWN_EXCEEDED": "превышена допустимая просадка",
+        "PROFIT_FACTOR_TOO_LOW": "низкий profit factor",
+        "NOT_ENOUGH_TRADES": "недостаточно сделок",
+        "DOES_NOT_BEAT_BASELINE": "не обгоняет baseline",
+        "DOES_NOT_BEAT_CHAMPION": "не обгоняет действующий champion",
+        "RECENT_PERIOD_UNSTABLE": "последний период нестабилен",
+        "INVALID_METRICS": "получены некорректные метрики",
+    }.get(reason, escape(reason.lower().replace("_", " ")))
 
 
 def _group_health(health: Sequence[SystemHealthItem]) -> dict[str, list[SystemHealthItem]]:

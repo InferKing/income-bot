@@ -33,6 +33,7 @@ from income_tg.bot.keyboards import (
 from income_tg.bot.presenters import (
     SystemHealthItem,
     SystemModelInfo,
+    SystemTrainingInfo,
     render_portfolios,
     render_system_status,
 )
@@ -43,6 +44,7 @@ from income_tg.common.money import (
     parse_positive_decimal,
 )
 from income_tg.config import Settings
+from income_tg.models.evaluation import AdmissionCriteria
 from income_tg.portfolio.errors import PortfolioError
 from income_tg.portfolio.service import PortfolioService
 from income_tg.risk.settings import RiskSettingsService
@@ -56,6 +58,7 @@ from income_tg.storage.trading_models import (
     ModelVersionRecord,
     ServiceHealthRecord,
     SignalRecord,
+    TrainingRunRecord,
 )
 
 router = Router(name="owner")
@@ -415,6 +418,12 @@ async def _system_status_text(session: AsyncSession, settings: Settings) -> str:
         .order_by(ModelVersionRecord.activated_at.desc())
         .limit(1)
     )
+    latest_training = await session.scalar(
+        select(TrainingRunRecord).order_by(TrainingRunRecord.started_at.desc()).limit(1)
+    )
+    training_attempts = int(
+        await session.scalar(select(func.count()).select_from(TrainingRunRecord)) or 0
+    )
     feature_vectors = (
         await session.scalar(select(func.count()).select_from(FeatureVectorRecord)) or 0
     )
@@ -477,9 +486,11 @@ async def _system_status_text(session: AsyncSession, settings: Settings) -> str:
         if champion is not None
         else None
     )
+    training = _system_training_info(latest_training, training_attempts)
     return render_system_status(
         health_items,
         model=model,
+        training=training,
         feature_vectors=feature_vectors,
         training_vectors=training_vectors,
         labeled_training_vectors=labeled_training_vectors,
@@ -491,6 +502,53 @@ async def _system_status_text(session: AsyncSession, settings: Settings) -> str:
         symbols=settings.symbols,
         now=datetime.now(UTC),
     )
+
+
+def _system_training_info(
+    run: TrainingRunRecord | None,
+    attempt_count: int,
+) -> SystemTrainingInfo | None:
+    if run is None:
+        return None
+    metrics = run.metrics or {}
+    reasons = metrics.get("admission_reasons", [])
+    finished_at = run.finished_at
+    return SystemTrainingInfo(
+        attempt_count=attempt_count,
+        status=run.status,
+        started_at=run.started_at,
+        finished_at=finished_at,
+        next_attempt_at=(finished_at + timedelta(minutes=15) if finished_at is not None else None),
+        net_return=_decimal_metric(metrics, "net_return"),
+        max_drawdown=_decimal_metric(metrics, "max_drawdown"),
+        profit_factor=_decimal_metric(metrics, "profit_factor"),
+        closed_trades=_integer_metric(metrics, "closed_trades"),
+        required_closed_trades=AdmissionCriteria().min_closed_trades,
+        admission_reasons=(
+            tuple(str(reason) for reason in reasons) if isinstance(reasons, list) else ()
+        ),
+    )
+
+
+def _decimal_metric(metrics: dict[str, object], name: str) -> Decimal | None:
+    value = metrics.get(name)
+    if value is None:
+        return None
+    try:
+        result = Decimal(str(value))
+    except ArithmeticError:
+        return None
+    return result if result.is_finite() else None
+
+
+def _integer_metric(metrics: dict[str, object], name: str) -> int | None:
+    value = metrics.get(name)
+    if isinstance(value, bool) or not isinstance(value, (str, int, float, Decimal)):
+        return None
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return None
 
 
 @router.message(Command("deposit"))
