@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
-from decimal import Decimal
+from decimal import ROUND_CEILING, Decimal
 from uuid import UUID
 
 from aiogram import F, Router
@@ -511,8 +511,23 @@ def _system_training_info(
     if run is None:
         return None
     metrics = run.metrics or {}
+    parameters = run.parameters or {}
     reasons = metrics.get("admission_reasons", [])
     finished_at = run.finished_at
+    criteria = AdmissionCriteria()
+    required_trade_fraction = _decimal_metric(parameters, "min_closed_trade_fraction") or Decimal(
+        str(criteria.min_closed_trade_fraction)
+    )
+    test_samples = _integer_metric(metrics, "test_samples")
+    required_closed_trades = (
+        int(
+            (Decimal(test_samples) * required_trade_fraction).to_integral_value(
+                rounding=ROUND_CEILING
+            )
+        )
+        if test_samples is not None and test_samples > 0
+        else None
+    )
     return SystemTrainingInfo(
         attempt_count=attempt_count,
         status=run.status,
@@ -523,7 +538,9 @@ def _system_training_info(
         max_drawdown=_decimal_metric(metrics, "max_drawdown"),
         profit_factor=_decimal_metric(metrics, "profit_factor"),
         closed_trades=_integer_metric(metrics, "closed_trades"),
-        required_closed_trades=AdmissionCriteria().min_closed_trades,
+        test_samples=test_samples,
+        required_closed_trades=required_closed_trades,
+        required_trade_fraction=required_trade_fraction,
         admission_reasons=(
             tuple(str(reason) for reason in reasons) if isinstance(reasons, list) else ()
         ),

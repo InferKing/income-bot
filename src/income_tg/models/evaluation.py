@@ -17,7 +17,18 @@ class ProbabilityMetrics:
 class AdmissionCriteria:
     max_drawdown: float = 0.15
     min_profit_factor: float = 1.2
-    min_closed_trades: int = 100
+    min_closed_trade_fraction: float = 0.20
+
+    def __post_init__(self) -> None:
+        if not math.isfinite(self.min_closed_trade_fraction) or not (
+            0 < self.min_closed_trade_fraction <= 1
+        ):
+            raise ValueError("min_closed_trade_fraction must be between zero and one")
+
+    def required_closed_trades(self, test_samples: int) -> int:
+        if test_samples <= 0:
+            raise ValueError("test_samples must be positive")
+        return math.ceil(test_samples * self.min_closed_trade_fraction)
 
 
 @dataclass(frozen=True, slots=True)
@@ -58,6 +69,7 @@ def evaluate_admission(
     max_drawdown: float,
     profit_factor: float,
     closed_trades: int,
+    test_samples: int,
     beats_baseline: bool,
     recent_period_stable: bool,
     beats_champion: bool = True,
@@ -69,6 +81,8 @@ def evaluate_admission(
         not all(math.isfinite(value) for value in (net_return, max_drawdown, profit_factor))
         or max_drawdown < 0
         or closed_trades < 0
+        or test_samples <= 0
+        or closed_trades > test_samples
     ):
         return AdmissionDecision(False, ("INVALID_METRICS",))
     if net_return <= 0:
@@ -77,7 +91,7 @@ def evaluate_admission(
         reasons.append("MAX_DRAWDOWN_EXCEEDED")
     if profit_factor < active_criteria.min_profit_factor:
         reasons.append("PROFIT_FACTOR_TOO_LOW")
-    if closed_trades < active_criteria.min_closed_trades:
+    if closed_trades < active_criteria.required_closed_trades(test_samples):
         reasons.append("NOT_ENOUGH_TRADES")
     if not beats_baseline:
         reasons.append("DOES_NOT_BEAT_BASELINE")

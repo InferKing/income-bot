@@ -72,7 +72,7 @@ class FakeActivator:
 
 
 def passing_assessment() -> CandidateAssessment:
-    return CandidateAssessment(0.2, 0.1, 1.5, 150, True, True)
+    return CandidateAssessment(0.2, 0.1, 1.5, 30, 150, True, True)
 
 
 async def test_accepted_challenger_is_registered_evaluated_and_promoted() -> None:
@@ -93,7 +93,7 @@ async def test_accepted_challenger_is_registered_evaluated_and_promoted() -> Non
 
 
 async def test_rejected_challenger_never_changes_active_model() -> None:
-    assessment = CandidateAssessment(-0.01, 0.2, 0.8, 10, False, False)
+    assessment = CandidateAssessment(-0.01, 0.2, 0.8, 10, 150, False, False)
     activator = FakeActivator()
     workflow = RetrainingWorkflow(
         FakeTrainer(fake_model("bad")),

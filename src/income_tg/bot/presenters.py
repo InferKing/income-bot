@@ -36,7 +36,9 @@ class SystemTrainingInfo:
     max_drawdown: Decimal | None
     profit_factor: Decimal | None
     closed_trades: int | None
-    required_closed_trades: int
+    test_samples: int | None
+    required_closed_trades: int | None
+    required_trade_fraction: Decimal
     admission_reasons: tuple[str, ...]
 
 
@@ -185,6 +187,14 @@ def _render_training(training: SystemTrainingInfo) -> list[str]:
     }.get(training.status, ("⚪", training.status.lower()))
     attempted_at = training.finished_at or training.started_at
     closed_trades = training.closed_trades if training.closed_trades is not None else "—"
+    minimum_percent = format_decimal(training.required_trade_fraction * Decimal("100"))
+    if training.required_closed_trades is None:
+        trades_line = f"• Сделок: <b>{closed_trades}</b> · минимум <b>{minimum_percent}%</b> теста"
+    else:
+        trades_line = (
+            f"• Сделок: <b>{closed_trades}</b> из необходимых "
+            f"<b>{training.required_closed_trades}</b> ({minimum_percent}% теста)"
+        )
     lines = [
         "<b>Последняя попытка обучения</b>",
         f"🕒 {_format_timestamp(attempted_at)}",
@@ -193,10 +203,7 @@ def _render_training(training: SystemTrainingInfo) -> list[str]:
         "",
         "<b>Метрики кандидата</b>",
         f"• Доходность: {_format_percent(training.net_return)}",
-        (
-            f"• Сделок: <b>{closed_trades}</b> "
-            f"из необходимых <b>{training.required_closed_trades}</b>"
-        ),
+        trades_line,
         f"• Profit factor: {_format_metric(training.profit_factor)}",
         f"• Max drawdown: {_format_percent(training.max_drawdown)}",
     ]

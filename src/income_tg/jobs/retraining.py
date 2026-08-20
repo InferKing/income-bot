@@ -23,6 +23,7 @@ class CandidateAssessment:
     max_drawdown: float
     profit_factor: float
     closed_trades: int
+    test_samples: int
     beats_baseline: bool
     recent_period_stable: bool
     beats_champion: bool = True
@@ -103,6 +104,7 @@ class RetrainingWorkflow:
             max_drawdown=assessment.max_drawdown,
             profit_factor=assessment.profit_factor,
             closed_trades=assessment.closed_trades,
+            test_samples=assessment.test_samples,
             beats_baseline=assessment.beats_baseline,
             recent_period_stable=assessment.recent_period_stable,
             beats_champion=assessment.beats_champion,

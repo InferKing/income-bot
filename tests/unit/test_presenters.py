@@ -106,7 +106,9 @@ def test_system_presenter_shows_rejected_training_metrics_and_reasons() -> None:
             max_drawdown=Decimal("0.0022266"),
             profit_factor=Decimal("0"),
             closed_trades=1,
-            required_closed_trades=100,
+            test_samples=159,
+            required_closed_trades=32,
+            required_trade_fraction=Decimal("0.20"),
             admission_reasons=(
                 "NET_RETURN_NOT_POSITIVE",
                 "PROFIT_FACTOR_TOO_LOW",
@@ -131,7 +133,7 @@ def test_system_presenter_shows_rejected_training_metrics_and_reasons() -> None:
     assert "кандидат отклонён" in text
     assert "Попыток: <b>247</b>" in text
     assert "Доходность: <code>-0.22</code>%" in text
-    assert "Сделок: <b>1</b> из необходимых <b>100</b>" in text
+    assert "Сделок: <b>1</b> из необходимых <b>32</b> (20% теста)" in text
     assert "недостаточно сделок" in text
     assert "не обгоняет baseline" in text
     assert "последний кандидат отклонён по метрикам" in text
