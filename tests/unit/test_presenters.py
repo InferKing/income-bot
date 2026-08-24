@@ -184,6 +184,18 @@ def test_candidate_details_show_actions_costs_checks_and_recent_trades() -> None
             best_trade_return=Decimal("0.01"),
             worst_trade_return=Decimal("-0.007"),
             average_confidence=Decimal("0.76"),
+            median_confidence=Decimal("0.58"),
+            p95_confidence=Decimal("0.67"),
+            max_confidence=Decimal("0.72"),
+            signals_by_threshold=(
+                (Decimal("0.55"), 40),
+                (Decimal("0.60"), 20),
+                (Decimal("0.65"), 5),
+                (Decimal("0.70"), 1),
+            ),
+            label_short=50,
+            label_no_trade=60,
+            label_long=50,
             recent_return=Decimal("-0.007"),
             baseline_return=Decimal("0"),
             champion_return=None,
@@ -206,6 +218,9 @@ def test_candidate_details_show_actions_costs_checks_and_recent_trades() -> None
     assert "LONG: <b>2</b> · SHORT: <b>1</b>" in text
     assert "Win rate: <code>33.33</code>%" in text
     assert "Расчётные комиссии: <code>0.45</code>%" in text
+    assert "SHORT / NO TRADE / LONG" in text
+    assert "<code>55</code>%: <b>40</b>" in text
+    assert "p50 / p95 / max" in text
     assert "❌ profit factor не ниже 1.2" in text
     assert "✅ просадка не выше 15%" in text
     assert "🔴 <b>SHORT</b>" in text

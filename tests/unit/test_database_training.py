@@ -13,6 +13,7 @@ from income_tg.models.training import ChronologicalDataset
 
 class PredictableModel:
     feature_names = ("signal",)
+    confidence_threshold = 0.70
 
     def __init__(self, probabilities_up: tuple[float, ...]) -> None:
         self._probabilities = iter(probabilities_up)
@@ -30,6 +31,7 @@ class PredictableModel:
             as_of=as_of,
             probability_up=probability_up,
             probability_down=1 - probability_up,
+            probability_no_trade=0.0,
             confidence=max(probability_up, 1 - probability_up),
             expected_directional_score=probability_up - 0.5,
             contributions=(),
@@ -45,7 +47,7 @@ def test_strategy_metrics_describe_candidate_actions_and_recent_trades() -> None
             timestamps=timestamps,
             feature_names=("signal",),
             features=np.asarray([[1.0], [2.0], [3.0], [4.0]], dtype=np.float64),
-            targets=np.asarray([1, 0, 1, 0], dtype=np.int64),
+            targets=np.asarray([1, -1, 0, 1], dtype=np.int64),
         ),
         forward_returns=(0.02, -0.01, 0.03, -0.005),
     )

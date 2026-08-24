@@ -567,7 +567,7 @@ def _system_training_info(
         status=run.status,
         started_at=run.started_at,
         finished_at=finished_at,
-        next_attempt_at=(finished_at + timedelta(minutes=15) if finished_at is not None else None),
+        next_attempt_at=(finished_at + timedelta(hours=1) if finished_at is not None else None),
         net_return=_decimal_metric(metrics, "net_return"),
         max_drawdown=_decimal_metric(metrics, "max_drawdown"),
         profit_factor=_decimal_metric(metrics, "profit_factor"),
@@ -613,6 +613,13 @@ def _candidate_detail_info(
         best_trade_return=_decimal_metric(metrics, "best_trade_return") or Decimal(0),
         worst_trade_return=_decimal_metric(metrics, "worst_trade_return") or Decimal(0),
         average_confidence=_decimal_metric(metrics, "average_confidence") or Decimal(0),
+        median_confidence=_decimal_metric(metrics, "median_confidence") or Decimal(0),
+        p95_confidence=_decimal_metric(metrics, "p95_confidence") or Decimal(0),
+        max_confidence=_decimal_metric(metrics, "max_confidence") or Decimal(0),
+        signals_by_threshold=_signal_threshold_counts(metrics.get("signals_by_threshold")),
+        label_short=_integer_metric(metrics, "label_short") or 0,
+        label_no_trade=_integer_metric(metrics, "label_no_trade") or 0,
+        label_long=_integer_metric(metrics, "label_long") or 0,
         recent_return=_decimal_metric(metrics, "recent_return") or Decimal(0),
         baseline_return=_decimal_metric(metrics, "baseline_return") or Decimal(0),
         champion_return=_decimal_metric(metrics, "champion_return"),
@@ -647,6 +654,21 @@ def _candidate_trades(value: object) -> tuple[CandidateTradeInfo, ...]:
             continue
         result.append(CandidateTradeInfo(occurred_at, direction, confidence, net_return))
     return tuple(result[-5:])
+
+
+def _signal_threshold_counts(value: object) -> tuple[tuple[Decimal, int], ...]:
+    if not isinstance(value, dict):
+        return ()
+    result: list[tuple[Decimal, int]] = []
+    for raw_threshold, raw_count in value.items():
+        try:
+            threshold = Decimal(str(raw_threshold))
+            count = int(raw_count)
+        except (ArithmeticError, TypeError, ValueError):
+            continue
+        if threshold.is_finite() and count >= 0:
+            result.append((threshold, count))
+    return tuple(sorted(result))
 
 
 def _decimal_metric(metrics: dict[str, object], name: str) -> Decimal | None:

@@ -15,8 +15,8 @@ from income_tg.signals.domain import (
 
 class SignalPolicy:
     def __init__(self, min_confidence: float = 0.70) -> None:
-        if not 0.5 < min_confidence < 1:
-            raise ValueError("min_confidence должна находиться между 0.5 и 1")
+        if not 0 < min_confidence < 1:
+            raise ValueError("min_confidence должна находиться между 0 и 1")
         self.min_confidence = min_confidence
 
     def create_candidate(
@@ -56,8 +56,14 @@ class SignalPolicy:
         prediction: ModelPrediction,
         current_position: ActivePosition | None,
     ) -> SignalAction:
-        bullish = prediction.probability_up >= self.min_confidence
-        bearish = prediction.probability_down >= self.min_confidence
+        bullish = (
+            prediction.probability_up >= self.min_confidence
+            and prediction.probability_up > prediction.probability_no_trade
+        )
+        bearish = (
+            prediction.probability_down >= self.min_confidence
+            and prediction.probability_down > prediction.probability_no_trade
+        )
         if current_position is not None:
             if (
                 current_position.direction in {PositionDirection.SPOT, PositionDirection.LONG}

@@ -141,7 +141,7 @@ async def _bootstrap_until_champion(
         except Exception:
             logger.exception("bootstrap_retraining_waiting_for_data")
         try:
-            await asyncio.wait_for(stop.wait(), timeout=900)
+            await asyncio.wait_for(stop.wait(), timeout=3600)
         except TimeoutError:
             continue
 

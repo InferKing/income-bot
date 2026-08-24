@@ -17,6 +17,7 @@ def _prediction(up: float) -> ModelPrediction:
         as_of=datetime(2026, 1, 1, tzinfo=UTC),
         probability_up=up,
         probability_down=1 - up,
+        probability_no_trade=0.0,
         confidence=max(up, 1 - up),
         expected_directional_score=up - 0.5,
         contributions=(("return_5", 1.2), ("funding_rate", -0.2)),
@@ -43,6 +44,28 @@ def test_policy_creates_long_and_closes_on_reversal() -> None:
         current_position=ActivePosition(PositionDirection.LONG),
     )
     assert close_signal.action is SignalAction.CLOSE
+
+
+def test_policy_holds_when_no_trade_probability_dominates() -> None:
+    prediction = _prediction(0.6)
+    prediction = ModelPrediction(
+        as_of=prediction.as_of,
+        probability_up=0.2,
+        probability_down=0.1,
+        probability_no_trade=0.7,
+        confidence=0.2,
+        expected_directional_score=0.1,
+        contributions=prediction.contributions,
+        model_version=prediction.model_version,
+    )
+    candidate = SignalPolicy(0.15).create_candidate(
+        instrument="BTCUSDT",
+        market_type=MarketType.LINEAR_PERPETUAL,
+        reference_price=100,
+        horizon="15m",
+        prediction=prediction,
+    )
+    assert candidate.action is SignalAction.HOLD
 
 
 def test_deduplicator_uses_cooldown() -> None:

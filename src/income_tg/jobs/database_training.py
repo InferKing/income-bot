@@ -31,8 +31,13 @@ class TrainingTarget:
     instrument_id: UUID
     horizon: str
     horizon_duration: timedelta
-    confidence_threshold: float = 0.70
     round_trip_cost: float = 0.0015
+    minimum_edge: float = 0.0005
+    target_action_fraction: float = 0.20
+
+    @property
+    def minimum_actionable_return(self) -> float:
+        return self.round_trip_cost + self.minimum_edge
 
 
 class DatabaseCandidateTrainer:
@@ -51,9 +56,13 @@ class DatabaseCandidateTrainer:
                 instrument_id=self.target.instrument_id,
                 horizon=self.target.horizon,
                 horizon_duration=self.target.horizon_duration,
+                minimum_actionable_return=self.target.minimum_actionable_return,
             )
         training, _ = chronological_train_test(labeled)
-        return train_ensemble(training.dataset)
+        return train_ensemble(
+            training.dataset,
+            target_action_fraction=self.target.target_action_fraction,
+        )
 
 
 class DatabaseCandidateEvaluator:
@@ -76,6 +85,7 @@ class DatabaseCandidateEvaluator:
                 instrument_id=self.target.instrument_id,
                 horizon=self.target.horizon,
                 horizon_duration=self.target.horizon_duration,
+                minimum_actionable_return=self.target.minimum_actionable_return,
             )
         _, test = chronological_train_test(labeled)
         challenger_metrics = _strategy_metrics(challenger, test, self.target)
@@ -87,7 +97,7 @@ class DatabaseCandidateEvaluator:
         details = CandidateDetails(
             test_from=(test.dataset.timestamps[0] if test.dataset.timestamps else None),
             test_to=(test.dataset.timestamps[-1] if test.dataset.timestamps else None),
-            confidence_threshold=self.target.confidence_threshold,
+            confidence_threshold=challenger.confidence_threshold,
             long_trades=challenger_metrics.long_trades,
             short_trades=challenger_metrics.short_trades,
             skipped_points=len(test.dataset.timestamps) - challenger_metrics.trades,
@@ -102,6 +112,13 @@ class DatabaseCandidateEvaluator:
             best_trade_return=challenger_metrics.best_trade_return,
             worst_trade_return=challenger_metrics.worst_trade_return,
             average_confidence=challenger_metrics.average_confidence,
+            median_confidence=challenger_metrics.median_confidence,
+            p95_confidence=challenger_metrics.p95_confidence,
+            max_confidence=challenger_metrics.max_confidence,
+            signals_by_threshold=challenger_metrics.signals_by_threshold,
+            label_short=int((test.dataset.targets == -1).sum()),
+            label_no_trade=int((test.dataset.targets == 0).sum()),
+            label_long=int((test.dataset.targets == 1).sum()),
             recent_return=challenger_metrics.recent_return,
             baseline_return=0.0,
             champion_return=champion_return,
@@ -166,8 +183,10 @@ class PersistedRetrainingWorkflow:
                     "instrument_id": str(self._target.instrument_id),
                     "horizon": self._target.horizon,
                     "horizon_seconds": int(self._target.horizon_duration.total_seconds()),
-                    "confidence_threshold": self._target.confidence_threshold,
                     "round_trip_cost": self._target.round_trip_cost,
+                    "minimum_edge": self._target.minimum_edge,
+                    "minimum_actionable_return": self._target.minimum_actionable_return,
+                    "target_action_fraction": self._target.target_action_fraction,
                     "max_drawdown": self._criteria.max_drawdown,
                     "min_profit_factor": self._criteria.min_profit_factor,
                     "min_closed_trade_fraction": self._criteria.min_closed_trade_fraction,
@@ -234,6 +253,10 @@ class _StrategyMetrics:
     best_trade_return: float
     worst_trade_return: float
     average_confidence: float
+    median_confidence: float
+    p95_confidence: float
+    max_confidence: float
+    signals_by_threshold: tuple[tuple[float, int], ...]
     recent_trades: tuple[CandidateTrade, ...]
 
 
@@ -244,6 +267,9 @@ def _strategy_metrics(
 ) -> _StrategyMetrics:
     pnls: list[float] = []
     trades: list[CandidateTrade] = []
+    directional_confidences: list[float] = []
+    actionable_confidences: list[float] = []
+    signal_counts = {threshold: 0 for threshold in (0.55, 0.60, 0.65, 0.70)}
     long_trades = 0
     short_trades = 0
     for index, timestamp in enumerate(labeled.dataset.timestamps):
@@ -253,13 +279,20 @@ def _strategy_metrics(
             values=tuple(float(value) for value in labeled.dataset.features[index]),
         )
         direction = 0
-        if prediction.probability_up >= target.confidence_threshold:
+        confidence = max(prediction.probability_up, prediction.probability_down)
+        directional_confidences.append(confidence)
+        direction_is_actionable = confidence > prediction.probability_no_trade
+        if direction_is_actionable:
+            for threshold in signal_counts:
+                signal_counts[threshold] += int(confidence >= threshold)
+        if direction_is_actionable and prediction.probability_up >= model.confidence_threshold:
             direction = 1
             confidence = prediction.probability_up
-        elif prediction.probability_down >= target.confidence_threshold:
+        elif direction_is_actionable and prediction.probability_down >= model.confidence_threshold:
             direction = -1
             confidence = prediction.probability_down
         if direction:
+            actionable_confidences.append(confidence)
             pnl = labeled.forward_returns[index] * direction - target.round_trip_cost
             pnls.append(pnl)
             long_trades += int(direction > 0)
@@ -292,6 +325,10 @@ def _strategy_metrics(
             best_trade_return=0.0,
             worst_trade_return=0.0,
             average_confidence=0.0,
+            median_confidence=_percentile(directional_confidences, 0.50),
+            p95_confidence=_percentile(directional_confidences, 0.95),
+            max_confidence=max(directional_confidences, default=0.0),
+            signals_by_threshold=tuple(signal_counts.items()),
             recent_trades=(),
         )
     equity = 1.0
@@ -325,7 +362,11 @@ def _strategy_metrics(
         average_trade_return=sum(pnls) / len(pnls),
         best_trade_return=max(pnls),
         worst_trade_return=min(pnls),
-        average_confidence=sum(item.confidence for item in trades) / len(trades),
+        average_confidence=sum(actionable_confidences) / len(actionable_confidences),
+        median_confidence=_percentile(directional_confidences, 0.50),
+        p95_confidence=_percentile(directional_confidences, 0.95),
+        max_confidence=max(directional_confidences, default=0.0),
+        signals_by_threshold=tuple(signal_counts.items()),
         recent_trades=tuple(trades[-5:]),
     )
 
@@ -351,6 +392,15 @@ def _candidate_detail_metrics(details: CandidateDetails | None) -> dict[str, obj
         "best_trade_return": details.best_trade_return,
         "worst_trade_return": details.worst_trade_return,
         "average_confidence": details.average_confidence,
+        "median_confidence": details.median_confidence,
+        "p95_confidence": details.p95_confidence,
+        "max_confidence": details.max_confidence,
+        "signals_by_threshold": {
+            str(threshold): count for threshold, count in details.signals_by_threshold
+        },
+        "label_short": details.label_short,
+        "label_no_trade": details.label_no_trade,
+        "label_long": details.label_long,
         "recent_return": details.recent_return,
         "baseline_return": details.baseline_return,
         "champion_return": details.champion_return,
@@ -364,3 +414,11 @@ def _candidate_detail_metrics(details: CandidateDetails | None) -> dict[str, obj
             for item in details.recent_trades
         ],
     }
+
+
+def _percentile(values: list[float], fraction: float) -> float:
+    if not values:
+        return 0.0
+    ordered = sorted(values)
+    index = round((len(ordered) - 1) * fraction)
+    return ordered[index]

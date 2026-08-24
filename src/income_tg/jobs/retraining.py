@@ -44,6 +44,13 @@ class CandidateDetails:
     best_trade_return: float
     worst_trade_return: float
     average_confidence: float
+    median_confidence: float
+    p95_confidence: float
+    max_confidence: float
+    signals_by_threshold: tuple[tuple[float, int], ...]
+    label_short: int
+    label_no_trade: int
+    label_long: int
     recent_return: float
     baseline_return: float
     champion_return: float | None

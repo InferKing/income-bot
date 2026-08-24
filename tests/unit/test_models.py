@@ -6,6 +6,7 @@ from pathlib import Path
 import numpy as np
 import pytest
 
+from income_tg.models.dataset import classify_forward_return
 from income_tg.models.evaluation import evaluate_admission, probability_metrics
 from income_tg.models.registry import FileModelRegistry
 from income_tg.models.training import ChronologicalDataset, train_ensemble
@@ -15,7 +16,8 @@ def _dataset(samples: int = 120) -> ChronologicalDataset:
     random = np.random.default_rng(42)
     first = random.normal(size=samples)
     second = random.normal(scale=0.5, size=samples)
-    targets = (first + second > 0).astype(np.int64)
+    score = first + second
+    targets = np.where(score > 0.5, 1, np.where(score < -0.5, -1, 0)).astype(np.int64)
     features = np.column_stack((first, second)).astype(np.float64)
     start = datetime(2025, 1, 1, tzinfo=UTC)
     return ChronologicalDataset(
@@ -35,8 +37,22 @@ def test_ensemble_trains_calibrates_and_predicts() -> None:
         values=tuple(float(value) for value in dataset.features[-1]),
     )
     assert 0 <= prediction.probability_up <= 1
-    assert prediction.confidence >= 0.5
+    assert 0 <= prediction.probability_no_trade <= 1
+    assert (
+        prediction.probability_up + prediction.probability_down + prediction.probability_no_trade
+        == pytest.approx(1)
+    )
+    assert 0 <= prediction.confidence <= 1
+    assert 0 < model.confidence_threshold < 1
     assert len(prediction.contributions) == 2
+
+
+@pytest.mark.parametrize(
+    ("forward_return", "expected"),
+    [(-0.003, -1), (-0.002, 0), (0.0, 0), (0.002, 0), (0.003, 1)],
+)
+def test_cost_aware_target_has_no_trade_zone(forward_return: float, expected: int) -> None:
+    assert classify_forward_return(forward_return, 0.002) == expected
 
 
 def test_registry_detects_artifact_and_promotes(tmp_path: Path) -> None:
