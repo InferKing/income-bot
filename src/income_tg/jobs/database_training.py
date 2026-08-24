@@ -7,7 +7,13 @@ from uuid import UUID
 from sqlalchemy import func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-from income_tg.jobs.retraining import CandidateAssessment, RetrainingOutcome, RetrainingWorkflow
+from income_tg.jobs.retraining import (
+    CandidateAssessment,
+    CandidateDetails,
+    CandidateTrade,
+    RetrainingOutcome,
+    RetrainingWorkflow,
+)
 from income_tg.models.dataset import LabeledDataset, chronological_train_test, load_labeled_dataset
 from income_tg.models.evaluation import AdmissionCriteria
 from income_tg.models.inference import EnsembleModel
@@ -76,7 +82,30 @@ class DatabaseCandidateEvaluator:
         champion_return = (
             _strategy_metrics(champion, test, self.target).net_return
             if champion is not None and champion.feature_names == test.dataset.feature_names
-            else float("-inf")
+            else None
+        )
+        details = CandidateDetails(
+            test_from=(test.dataset.timestamps[0] if test.dataset.timestamps else None),
+            test_to=(test.dataset.timestamps[-1] if test.dataset.timestamps else None),
+            confidence_threshold=self.target.confidence_threshold,
+            long_trades=challenger_metrics.long_trades,
+            short_trades=challenger_metrics.short_trades,
+            skipped_points=len(test.dataset.timestamps) - challenger_metrics.trades,
+            winning_trades=challenger_metrics.winning_trades,
+            losing_trades=challenger_metrics.losing_trades,
+            breakeven_trades=challenger_metrics.breakeven_trades,
+            win_rate=challenger_metrics.win_rate,
+            gross_profit=challenger_metrics.gross_profit,
+            gross_loss=challenger_metrics.gross_loss,
+            total_costs=challenger_metrics.total_costs,
+            average_trade_return=challenger_metrics.average_trade_return,
+            best_trade_return=challenger_metrics.best_trade_return,
+            worst_trade_return=challenger_metrics.worst_trade_return,
+            average_confidence=challenger_metrics.average_confidence,
+            recent_return=challenger_metrics.recent_return,
+            baseline_return=0.0,
+            champion_return=champion_return,
+            recent_trades=challenger_metrics.recent_trades,
         )
         return CandidateAssessment(
             net_return=challenger_metrics.net_return,
@@ -86,7 +115,10 @@ class DatabaseCandidateEvaluator:
             test_samples=len(test.dataset.timestamps),
             beats_baseline=challenger_metrics.net_return > 0.0,
             recent_period_stable=challenger_metrics.recent_return >= 0,
-            beats_champion=challenger_metrics.net_return > champion_return,
+            beats_champion=(
+                champion_return is None or challenger_metrics.net_return > champion_return
+            ),
+            details=details,
         )
 
 
@@ -136,9 +168,12 @@ class PersistedRetrainingWorkflow:
                     "horizon_seconds": int(self._target.horizon_duration.total_seconds()),
                     "confidence_threshold": self._target.confidence_threshold,
                     "round_trip_cost": self._target.round_trip_cost,
+                    "max_drawdown": self._criteria.max_drawdown,
+                    "min_profit_factor": self._criteria.min_profit_factor,
                     "min_closed_trade_fraction": self._criteria.min_closed_trade_fraction,
                 },
                 metrics={
+                    "candidate_version": outcome.challenger_version,
                     "net_return": outcome.assessment.net_return,
                     "max_drawdown": outcome.assessment.max_drawdown,
                     "profit_factor": outcome.assessment.profit_factor,
@@ -148,6 +183,7 @@ class PersistedRetrainingWorkflow:
                         outcome.assessment.closed_trades / outcome.assessment.test_samples
                     ),
                     "admission_reasons": list(outcome.decision.reasons),
+                    **_candidate_detail_metrics(outcome.assessment.details),
                 },
                 error_message=outcome.rollback_reason,
                 code_version="0.1.0",
@@ -185,6 +221,20 @@ class _StrategyMetrics:
     profit_factor: float
     trades: int
     recent_return: float
+    long_trades: int
+    short_trades: int
+    winning_trades: int
+    losing_trades: int
+    breakeven_trades: int
+    win_rate: float
+    gross_profit: float
+    gross_loss: float
+    total_costs: float
+    average_trade_return: float
+    best_trade_return: float
+    worst_trade_return: float
+    average_confidence: float
+    recent_trades: tuple[CandidateTrade, ...]
 
 
 def _strategy_metrics(
@@ -193,6 +243,9 @@ def _strategy_metrics(
     target: TrainingTarget,
 ) -> _StrategyMetrics:
     pnls: list[float] = []
+    trades: list[CandidateTrade] = []
+    long_trades = 0
+    short_trades = 0
     for index, timestamp in enumerate(labeled.dataset.timestamps):
         prediction = model.predict(
             as_of=timestamp,
@@ -202,12 +255,45 @@ def _strategy_metrics(
         direction = 0
         if prediction.probability_up >= target.confidence_threshold:
             direction = 1
+            confidence = prediction.probability_up
         elif prediction.probability_down >= target.confidence_threshold:
             direction = -1
+            confidence = prediction.probability_down
         if direction:
-            pnls.append(labeled.forward_returns[index] * direction - target.round_trip_cost)
+            pnl = labeled.forward_returns[index] * direction - target.round_trip_cost
+            pnls.append(pnl)
+            long_trades += int(direction > 0)
+            short_trades += int(direction < 0)
+            trades.append(
+                CandidateTrade(
+                    occurred_at=timestamp,
+                    direction="LONG" if direction > 0 else "SHORT",
+                    confidence=confidence,
+                    net_return=pnl,
+                )
+            )
     if not pnls:
-        return _StrategyMetrics(0.0, 0.0, 0.0, 0, 0.0)
+        return _StrategyMetrics(
+            net_return=0.0,
+            max_drawdown=0.0,
+            profit_factor=0.0,
+            trades=0,
+            recent_return=0.0,
+            long_trades=0,
+            short_trades=0,
+            winning_trades=0,
+            losing_trades=0,
+            breakeven_trades=0,
+            win_rate=0.0,
+            gross_profit=0.0,
+            gross_loss=0.0,
+            total_costs=0.0,
+            average_trade_return=0.0,
+            best_trade_return=0.0,
+            worst_trade_return=0.0,
+            average_confidence=0.0,
+            recent_trades=(),
+        )
     equity = 1.0
     peak = 1.0
     max_drawdown = 0.0
@@ -217,6 +303,9 @@ def _strategy_metrics(
         max_drawdown = max(max_drawdown, (peak - equity) / peak)
     gains = sum(value for value in pnls if value > 0)
     losses = abs(sum(value for value in pnls if value < 0))
+    winning_trades = sum(value > 0 for value in pnls)
+    losing_trades = sum(value < 0 for value in pnls)
+    breakeven_trades = len(pnls) - winning_trades - losing_trades
     recent = pnls[max(0, len(pnls) * 3 // 4) :]
     return _StrategyMetrics(
         net_return=equity - 1,
@@ -224,4 +313,54 @@ def _strategy_metrics(
         profit_factor=gains / losses if losses else (999.0 if gains else 0.0),
         trades=len(pnls),
         recent_return=sum(recent),
+        long_trades=long_trades,
+        short_trades=short_trades,
+        winning_trades=winning_trades,
+        losing_trades=losing_trades,
+        breakeven_trades=breakeven_trades,
+        win_rate=winning_trades / len(pnls),
+        gross_profit=gains,
+        gross_loss=losses,
+        total_costs=target.round_trip_cost * len(pnls),
+        average_trade_return=sum(pnls) / len(pnls),
+        best_trade_return=max(pnls),
+        worst_trade_return=min(pnls),
+        average_confidence=sum(item.confidence for item in trades) / len(trades),
+        recent_trades=tuple(trades[-5:]),
     )
+
+
+def _candidate_detail_metrics(details: CandidateDetails | None) -> dict[str, object]:
+    if details is None:
+        return {}
+    return {
+        "test_from": details.test_from.isoformat() if details.test_from is not None else None,
+        "test_to": details.test_to.isoformat() if details.test_to is not None else None,
+        "confidence_threshold": details.confidence_threshold,
+        "long_trades": details.long_trades,
+        "short_trades": details.short_trades,
+        "skipped_points": details.skipped_points,
+        "winning_trades": details.winning_trades,
+        "losing_trades": details.losing_trades,
+        "breakeven_trades": details.breakeven_trades,
+        "win_rate": details.win_rate,
+        "gross_profit": details.gross_profit,
+        "gross_loss": details.gross_loss,
+        "total_costs": details.total_costs,
+        "average_trade_return": details.average_trade_return,
+        "best_trade_return": details.best_trade_return,
+        "worst_trade_return": details.worst_trade_return,
+        "average_confidence": details.average_confidence,
+        "recent_return": details.recent_return,
+        "baseline_return": details.baseline_return,
+        "champion_return": details.champion_return,
+        "recent_trades": [
+            {
+                "occurred_at": item.occurred_at.isoformat(),
+                "direction": item.direction,
+                "confidence": item.confidence,
+                "net_return": item.net_return,
+            }
+            for item in details.recent_trades
+        ],
+    }

@@ -18,6 +18,39 @@ from income_tg.models.registry import RegisteredModel
 
 
 @dataclass(frozen=True, slots=True)
+class CandidateTrade:
+    occurred_at: datetime
+    direction: str
+    confidence: float
+    net_return: float
+
+
+@dataclass(frozen=True, slots=True)
+class CandidateDetails:
+    test_from: datetime | None
+    test_to: datetime | None
+    confidence_threshold: float
+    long_trades: int
+    short_trades: int
+    skipped_points: int
+    winning_trades: int
+    losing_trades: int
+    breakeven_trades: int
+    win_rate: float
+    gross_profit: float
+    gross_loss: float
+    total_costs: float
+    average_trade_return: float
+    best_trade_return: float
+    worst_trade_return: float
+    average_confidence: float
+    recent_return: float
+    baseline_return: float
+    champion_return: float | None
+    recent_trades: tuple[CandidateTrade, ...]
+
+
+@dataclass(frozen=True, slots=True)
 class CandidateAssessment:
     net_return: float
     max_drawdown: float
@@ -27,6 +60,7 @@ class CandidateAssessment:
     beats_baseline: bool
     recent_period_stable: bool
     beats_champion: bool = True
+    details: CandidateDetails | None = None
 
 
 class RetrainingStatus(StrEnum):

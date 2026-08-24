@@ -12,10 +12,17 @@ from income_tg.jobs.models import (
     PersistentJobStore,
     SchedulerHealth,
 )
+from income_tg.jobs.retention import (
+    OrderbookRetentionJob,
+    delete_expired_orderbook_batch,
+    orderbook_retention_definition,
+)
 from income_tg.jobs.retraining import (
     ActivationCheck,
     CandidateAssessment,
+    CandidateDetails,
     CandidateEvaluator,
+    CandidateTrade,
     CandidateTrainer,
     ModelRegistry,
     RetrainingOutcome,
@@ -33,7 +40,9 @@ __all__ = [
     "AsyncScheduler",
     "AtomicModelActivator",
     "CandidateAssessment",
+    "CandidateDetails",
     "CandidateEvaluator",
+    "CandidateTrade",
     "CandidateTrainer",
     "Clock",
     "FileModelActivator",
@@ -46,6 +55,7 @@ __all__ = [
     "JsonJobStore",
     "LostJobLeaseError",
     "ModelRegistry",
+    "OrderbookRetentionJob",
     "PersistentJobStore",
     "RetrainingOutcome",
     "RetrainingStatus",
@@ -53,6 +63,8 @@ __all__ = [
     "SchedulerHealth",
     "SystemClock",
     "WeeklyRetrainingJob",
+    "delete_expired_orderbook_batch",
     "next_weekly_run",
+    "orderbook_retention_definition",
     "weekly_retraining_definition",
 ]

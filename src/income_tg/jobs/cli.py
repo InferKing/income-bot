@@ -17,6 +17,7 @@ from income_tg.jobs.database_training import (
     PersistedRetrainingWorkflow,
     TrainingTarget,
 )
+from income_tg.jobs.retention import OrderbookRetentionJob, orderbook_retention_definition
 from income_tg.jobs.retraining import (
     RetrainingRunner,
     RetrainingWorkflow,
@@ -64,8 +65,18 @@ async def run(args: argparse.Namespace) -> None:
         if args.run_once:
             await workflow.run()
             return
-        definition = weekly_retraining_definition(workflow, datetime.now(UTC))
-        scheduler = AsyncScheduler(JsonJobStore(args.state_file), (definition,))
+        retraining_definition = weekly_retraining_definition(workflow, datetime.now(UTC))
+        retention_job = OrderbookRetentionJob(
+            database.session_factory,
+            retention=timedelta(days=args.orderbook_retention_days),
+            batch_size=args.orderbook_retention_batch_size,
+            max_batches=args.orderbook_retention_max_batches,
+        )
+        retention_definition = orderbook_retention_definition(retention_job)
+        scheduler = AsyncScheduler(
+            JsonJobStore(args.state_file),
+            (retention_definition, retraining_definition),
+        )
         stop = asyncio.Event()
         loop = asyncio.get_running_loop()
         for signal_name in (signal.SIGINT, signal.SIGTERM):
@@ -144,6 +155,9 @@ def main() -> None:
     parser.add_argument(
         "--state-file", type=Path, default=Path("models/scheduler-state.json").resolve()
     )
+    parser.add_argument("--orderbook-retention-days", type=int, default=7)
+    parser.add_argument("--orderbook-retention-batch-size", type=int, default=10_000)
+    parser.add_argument("--orderbook-retention-max-batches", type=int, default=100)
     parser.add_argument("--run-once", action="store_true")
     asyncio.run(run(parser.parse_args()))
 
