@@ -90,6 +90,7 @@ class DatabasePredictionRecorder:
             data_cutoff=vector.data_cutoff,
             probability_up=prediction.probability_up,
             probability_down=prediction.probability_down,
+            probability_no_trade=prediction.probability_no_trade,
             confidence=prediction.confidence,
             contributions=[list(value) for value in prediction.contributions],
         )
@@ -396,7 +397,7 @@ async def _run_cycle(
         worker = TradingWorker(
             feature_pipeline=StoredFeatureBuilder(vector),
             active_model=model,
-            signal_policy=SignalPolicy(float(profile.min_signal_confidence)),
+            signal_policy=SignalPolicy(model.confidence_threshold),
             risk_engine=RiskEngine(
                 RiskLimits(
                     max_margin_fraction=profile.max_margin_fraction,

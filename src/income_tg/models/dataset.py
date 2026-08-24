@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import math
 from bisect import bisect_left, bisect_right
 from dataclasses import dataclass
 from datetime import timedelta
@@ -25,7 +26,10 @@ async def load_labeled_dataset(
     instrument_id: UUID,
     horizon: str,
     horizon_duration: timedelta,
+    minimum_actionable_return: float = 0.0,
 ) -> LabeledDataset:
+    if not math.isfinite(minimum_actionable_return) or minimum_actionable_return < 0:
+        raise ValueError("minimum_actionable_return must be finite and non-negative")
     vectors = list(
         await session.scalars(
             select(FeatureVectorRecord)
@@ -68,7 +72,7 @@ async def load_labeled_dataset(
         forward_return = future / current - 1
         timestamps.append(vector.as_of)
         rows.append([float(value) for value in vector.values])
-        targets.append(1 if forward_return > 0 else 0)
+        targets.append(classify_forward_return(forward_return, minimum_actionable_return))
         forward_returns.append(forward_return)
     if len(rows) < 40:
         raise ValueError("Для обучения требуется минимум 40 размеченных векторов")
@@ -81,6 +85,14 @@ async def load_labeled_dataset(
         ),
         forward_returns=tuple(forward_returns),
     )
+
+
+def classify_forward_return(forward_return: float, minimum_actionable_return: float) -> int:
+    if forward_return > minimum_actionable_return:
+        return 1
+    if forward_return < -minimum_actionable_return:
+        return -1
+    return 0
 
 
 def chronological_train_test(

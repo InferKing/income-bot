@@ -238,6 +238,7 @@ class PredictionRecord(Base):
     data_cutoff: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     probability_up: Mapped[float] = mapped_column(Float, nullable=False)
     probability_down: Mapped[float] = mapped_column(Float, nullable=False)
+    probability_no_trade: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
     confidence: Mapped[float] = mapped_column(Float, nullable=False)
     contributions: Mapped[list[list[Any]]] = mapped_column(JSON, nullable=False)
 

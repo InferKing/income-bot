@@ -53,6 +53,13 @@ class CandidateDetailInfo:
     best_trade_return: Decimal
     worst_trade_return: Decimal
     average_confidence: Decimal
+    median_confidence: Decimal
+    p95_confidence: Decimal
+    max_confidence: Decimal
+    signals_by_threshold: tuple[tuple[Decimal, int], ...]
+    label_short: int
+    label_no_trade: int
+    label_long: int
     recent_return: Decimal
     baseline_return: Decimal
     champion_return: Decimal | None
@@ -228,6 +235,11 @@ def render_candidate_details(training: SystemTrainingInfo) -> str:
             f"• Период: {test_period}",
             f"• Точек: <b>{training.test_samples or 0}</b>",
             f"• Порог уверенности: {_format_percent(details.confidence_threshold)}",
+            (
+                "• Разметка SHORT / NO TRADE / LONG: "
+                f"<b>{details.label_short}</b> / <b>{details.label_no_trade}</b> / "
+                f"<b>{details.label_long}</b>"
+            ),
             "",
             "<b>Действия кандидата</b>",
             f"• LONG: <b>{details.long_trades}</b> · SHORT: <b>{details.short_trades}</b>",
@@ -238,6 +250,12 @@ def render_candidate_details(training: SystemTrainingInfo) -> str:
             ),
             f"• Win rate: {_format_percent(details.win_rate)}",
             f"• Средняя уверенность входов: {_format_percent(details.average_confidence)}",
+            (
+                "• Уверенность p50 / p95 / max: "
+                f"{_format_percent(details.median_confidence)} / "
+                f"{_format_percent(details.p95_confidence)} / "
+                f"{_format_percent(details.max_confidence)}"
+            ),
             "",
             "<b>Финансовый результат</b>",
             f"• Итоговая доходность: {_format_percent(training.net_return)}",
@@ -263,6 +281,12 @@ def render_candidate_details(training: SystemTrainingInfo) -> str:
             *_admission_checks(training),
         )
     )
+    if details.signals_by_threshold:
+        signal_summary = " · ".join(
+            f"{_format_percent(threshold)}: <b>{count}</b>"
+            for threshold, count in details.signals_by_threshold
+        )
+        lines.extend(("", "<b>Сигналы по порогам</b>", signal_summary))
     if details.recent_trades:
         lines.extend(("", "<b>Последние симулированные сделки</b>"))
         lines.extend(_render_candidate_trade(item) for item in details.recent_trades)

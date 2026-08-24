@@ -45,7 +45,7 @@ class FakeModel:
         del feature_names, values
         up = self.probability_up
         return ModelPrediction(
-            as_of, up, 1 - up, max(up, 1 - up), up - 0.5, (("x", 1.0),), "champion-1"
+            as_of, up, 1 - up, 0.0, max(up, 1 - up), up - 0.5, (("x", 1.0),), "champion-1"
         )
 
 
