@@ -3,8 +3,11 @@ from decimal import Decimal
 from uuid import uuid4
 
 from income_tg.bot.presenters import (
+    CandidateDetailInfo,
+    CandidateTradeInfo,
     SystemHealthItem,
     SystemTrainingInfo,
+    render_candidate_details,
     render_portfolios,
     render_system_status,
 )
@@ -138,3 +141,71 @@ def test_system_presenter_shows_rejected_training_metrics_and_reasons() -> None:
     assert "не обгоняет baseline" in text
     assert "последний кандидат отклонён по метрикам" in text
     assert "Следующая попытка" in text
+
+
+def test_candidate_details_show_actions_costs_checks_and_recent_trades() -> None:
+    now = datetime(2026, 8, 24, 10, 30, tzinfo=UTC)
+    training = SystemTrainingInfo(
+        attempt_count=251,
+        status="REJECTED",
+        started_at=now - timedelta(seconds=5),
+        finished_at=now,
+        next_attempt_at=now + timedelta(minutes=15),
+        net_return=Decimal("-0.002"),
+        max_drawdown=Decimal("0.004"),
+        profit_factor=Decimal("0.8"),
+        closed_trades=3,
+        test_samples=160,
+        required_closed_trades=32,
+        required_trade_fraction=Decimal("0.2"),
+        admission_reasons=(
+            "NET_RETURN_NOT_POSITIVE",
+            "PROFIT_FACTOR_TOO_LOW",
+            "NOT_ENOUGH_TRADES",
+            "DOES_NOT_BEAT_BASELINE",
+            "RECENT_PERIOD_UNSTABLE",
+        ),
+        details=CandidateDetailInfo(
+            candidate_version="ensemble-test",
+            test_from=now - timedelta(days=2),
+            test_to=now - timedelta(minutes=15),
+            confidence_threshold=Decimal("0.7"),
+            long_trades=2,
+            short_trades=1,
+            skipped_points=157,
+            winning_trades=1,
+            losing_trades=2,
+            breakeven_trades=0,
+            win_rate=Decimal("0.3333"),
+            gross_profit=Decimal("0.01"),
+            gross_loss=Decimal("0.012"),
+            total_costs=Decimal("0.0045"),
+            average_trade_return=Decimal("-0.00067"),
+            best_trade_return=Decimal("0.01"),
+            worst_trade_return=Decimal("-0.007"),
+            average_confidence=Decimal("0.76"),
+            recent_return=Decimal("-0.007"),
+            baseline_return=Decimal("0"),
+            champion_return=None,
+            max_allowed_drawdown=Decimal("0.15"),
+            min_profit_factor=Decimal("1.2"),
+            recent_trades=(
+                CandidateTradeInfo(
+                    occurred_at=now - timedelta(minutes=15),
+                    direction="SHORT",
+                    confidence=Decimal("0.74"),
+                    net_return=Decimal("-0.007"),
+                ),
+            ),
+        ),
+    )
+
+    text = render_candidate_details(training)
+
+    assert "ensemble-test" in text
+    assert "LONG: <b>2</b> · SHORT: <b>1</b>" in text
+    assert "Win rate: <code>33.33</code>%" in text
+    assert "Расчётные комиссии: <code>0.45</code>%" in text
+    assert "❌ profit factor не ниже 1.2" in text
+    assert "✅ просадка не выше 15%" in text
+    assert "🔴 <b>SHORT</b>" in text

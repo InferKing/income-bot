@@ -23,6 +23,7 @@ from income_tg.bot.keyboards import (
     STATISTICS_BUTTON,
     SYSTEM_BUTTON,
     WITHDRAW_BUTTON,
+    candidate_details_keyboard,
     command_example_keyboard,
     help_keyboard,
     main_keyboard,
@@ -31,9 +32,12 @@ from income_tg.bot.keyboards import (
     system_keyboard,
 )
 from income_tg.bot.presenters import (
+    CandidateDetailInfo,
+    CandidateTradeInfo,
     SystemHealthItem,
     SystemModelInfo,
     SystemTrainingInfo,
+    render_candidate_details,
     render_portfolios,
     render_system_status,
 )
@@ -332,6 +336,35 @@ async def refresh_system_status(
         await callback.answer("Данные уже актуальны")
 
 
+@router.callback_query(F.data == "system:candidate")
+async def show_candidate_details(callback: CallbackQuery, session: AsyncSession) -> None:
+    message = _callback_message(callback)
+    if message is None:
+        await callback.answer("Сообщение больше недоступно", show_alert=True)
+        return
+    latest_training = await session.scalar(
+        select(TrainingRunRecord).order_by(TrainingRunRecord.started_at.desc()).limit(1)
+    )
+    if latest_training is None:
+        await callback.answer("Попыток обучения пока не было", show_alert=True)
+        return
+    training_attempts = int(
+        await session.scalar(select(func.count()).select_from(TrainingRunRecord)) or 0
+    )
+    training = _system_training_info(latest_training, training_attempts)
+    if training is None:
+        await callback.answer("Данные кандидата недоступны", show_alert=True)
+        return
+    text = render_candidate_details(training)
+    try:
+        await message.edit_text(text, reply_markup=candidate_details_keyboard())
+        await callback.answer()
+    except TelegramBadRequest as error:
+        if "message is not modified" not in str(error).lower():
+            raise
+        await callback.answer("Данные уже актуальны")
+
+
 @router.callback_query(F.data == "help:main")
 async def show_help_callback(callback: CallbackQuery) -> None:
     await _edit_callback(callback, HELP_TEXT, help_keyboard())
@@ -528,6 +561,7 @@ def _system_training_info(
         if test_samples is not None and test_samples > 0
         else None
     )
+    details = _candidate_detail_info(metrics, parameters)
     return SystemTrainingInfo(
         attempt_count=attempt_count,
         status=run.status,
@@ -544,7 +578,75 @@ def _system_training_info(
         admission_reasons=(
             tuple(str(reason) for reason in reasons) if isinstance(reasons, list) else ()
         ),
+        details=details,
     )
+
+
+def _candidate_detail_info(
+    metrics: dict[str, object],
+    parameters: dict[str, object],
+) -> CandidateDetailInfo | None:
+    long_trades = _integer_metric(metrics, "long_trades")
+    if long_trades is None:
+        return None
+    criteria = AdmissionCriteria()
+    return CandidateDetailInfo(
+        candidate_version=_string_metric(metrics, "candidate_version"),
+        test_from=_datetime_metric(metrics, "test_from"),
+        test_to=_datetime_metric(metrics, "test_to"),
+        confidence_threshold=(
+            _decimal_metric(metrics, "confidence_threshold")
+            or _decimal_metric(parameters, "confidence_threshold")
+            or Decimal("0.70")
+        ),
+        long_trades=long_trades,
+        short_trades=_integer_metric(metrics, "short_trades") or 0,
+        skipped_points=_integer_metric(metrics, "skipped_points") or 0,
+        winning_trades=_integer_metric(metrics, "winning_trades") or 0,
+        losing_trades=_integer_metric(metrics, "losing_trades") or 0,
+        breakeven_trades=_integer_metric(metrics, "breakeven_trades") or 0,
+        win_rate=_decimal_metric(metrics, "win_rate") or Decimal(0),
+        gross_profit=_decimal_metric(metrics, "gross_profit") or Decimal(0),
+        gross_loss=_decimal_metric(metrics, "gross_loss") or Decimal(0),
+        total_costs=_decimal_metric(metrics, "total_costs") or Decimal(0),
+        average_trade_return=(_decimal_metric(metrics, "average_trade_return") or Decimal(0)),
+        best_trade_return=_decimal_metric(metrics, "best_trade_return") or Decimal(0),
+        worst_trade_return=_decimal_metric(metrics, "worst_trade_return") or Decimal(0),
+        average_confidence=_decimal_metric(metrics, "average_confidence") or Decimal(0),
+        recent_return=_decimal_metric(metrics, "recent_return") or Decimal(0),
+        baseline_return=_decimal_metric(metrics, "baseline_return") or Decimal(0),
+        champion_return=_decimal_metric(metrics, "champion_return"),
+        max_allowed_drawdown=(
+            _decimal_metric(parameters, "max_drawdown") or Decimal(str(criteria.max_drawdown))
+        ),
+        min_profit_factor=(
+            _decimal_metric(parameters, "min_profit_factor")
+            or Decimal(str(criteria.min_profit_factor))
+        ),
+        recent_trades=_candidate_trades(metrics.get("recent_trades")),
+    )
+
+
+def _candidate_trades(value: object) -> tuple[CandidateTradeInfo, ...]:
+    if not isinstance(value, list):
+        return ()
+    result: list[CandidateTradeInfo] = []
+    for item in value:
+        if not isinstance(item, dict):
+            continue
+        occurred_at = _datetime_metric(item, "occurred_at")
+        direction = _string_metric(item, "direction")
+        confidence = _decimal_metric(item, "confidence")
+        net_return = _decimal_metric(item, "net_return")
+        if (
+            occurred_at is None
+            or direction not in {"LONG", "SHORT"}
+            or confidence is None
+            or net_return is None
+        ):
+            continue
+        result.append(CandidateTradeInfo(occurred_at, direction, confidence, net_return))
+    return tuple(result[-5:])
 
 
 def _decimal_metric(metrics: dict[str, object], name: str) -> Decimal | None:
@@ -566,6 +668,22 @@ def _integer_metric(metrics: dict[str, object], name: str) -> int | None:
         return int(value)
     except (TypeError, ValueError):
         return None
+
+
+def _string_metric(metrics: dict[str, object], name: str) -> str | None:
+    value = metrics.get(name)
+    return value if isinstance(value, str) and value else None
+
+
+def _datetime_metric(metrics: dict[str, object], name: str) -> datetime | None:
+    value = _string_metric(metrics, name)
+    if value is None:
+        return None
+    try:
+        parsed = datetime.fromisoformat(value)
+    except ValueError:
+        return None
+    return parsed if parsed.tzinfo is not None and parsed.utcoffset() is not None else None
 
 
 @router.message(Command("deposit"))

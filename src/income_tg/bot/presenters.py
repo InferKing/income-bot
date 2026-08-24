@@ -26,6 +26,42 @@ class SystemModelInfo:
 
 
 @dataclass(frozen=True, slots=True)
+class CandidateTradeInfo:
+    occurred_at: datetime
+    direction: str
+    confidence: Decimal
+    net_return: Decimal
+
+
+@dataclass(frozen=True, slots=True)
+class CandidateDetailInfo:
+    candidate_version: str | None
+    test_from: datetime | None
+    test_to: datetime | None
+    confidence_threshold: Decimal
+    long_trades: int
+    short_trades: int
+    skipped_points: int
+    winning_trades: int
+    losing_trades: int
+    breakeven_trades: int
+    win_rate: Decimal
+    gross_profit: Decimal
+    gross_loss: Decimal
+    total_costs: Decimal
+    average_trade_return: Decimal
+    best_trade_return: Decimal
+    worst_trade_return: Decimal
+    average_confidence: Decimal
+    recent_return: Decimal
+    baseline_return: Decimal
+    champion_return: Decimal | None
+    max_allowed_drawdown: Decimal
+    min_profit_factor: Decimal
+    recent_trades: tuple[CandidateTradeInfo, ...]
+
+
+@dataclass(frozen=True, slots=True)
 class SystemTrainingInfo:
     attempt_count: int
     status: str
@@ -40,6 +76,7 @@ class SystemTrainingInfo:
     required_closed_trades: int | None
     required_trade_fraction: Decimal
     admission_reasons: tuple[str, ...]
+    details: CandidateDetailInfo | None = None
 
 
 def render_portfolios(portfolios: list[PortfolioBalance], manual_usdt_rub_rate: Decimal) -> str:
@@ -157,6 +194,81 @@ def render_system_status(
     return "\n".join(lines)
 
 
+def render_candidate_details(training: SystemTrainingInfo) -> str:
+    details = training.details
+    attempted_at = training.finished_at or training.started_at
+    status_label = {
+        "PROMOTED": "назначен champion",
+        "REJECTED": "отклонён",
+        "ROLLED_BACK": "активация отменена",
+    }.get(training.status, training.status.lower())
+    lines = [
+        "🔎 <b>Последний кандидат</b>",
+        f"🕒 {_format_timestamp(attempted_at)}",
+        f"Статус: <b>{escape(status_label)}</b>",
+    ]
+    if details is None:
+        lines.extend(
+            (
+                "",
+                "Подробные метрики для этой попытки ещё не сохранялись.",
+                "Они появятся после следующего автоматического обучения.",
+                "",
+                *_render_training(training),
+            )
+        )
+        return "\n".join(lines)
+    version = escape(details.candidate_version) if details.candidate_version else "не указана"
+    test_period = _format_period(details.test_from, details.test_to)
+    lines.extend(
+        (
+            f"🧬 Версия: <code>{version}</code>",
+            "",
+            "<b>Проверка</b>",
+            f"• Период: {test_period}",
+            f"• Точек: <b>{training.test_samples or 0}</b>",
+            f"• Порог уверенности: {_format_percent(details.confidence_threshold)}",
+            "",
+            "<b>Действия кандидата</b>",
+            f"• LONG: <b>{details.long_trades}</b> · SHORT: <b>{details.short_trades}</b>",
+            f"• Без входа: <b>{details.skipped_points}</b>",
+            (
+                f"• Прибыльных/убыточных/нулевых: <b>{details.winning_trades}</b> / "
+                f"<b>{details.losing_trades}</b> / <b>{details.breakeven_trades}</b>"
+            ),
+            f"• Win rate: {_format_percent(details.win_rate)}",
+            f"• Средняя уверенность входов: {_format_percent(details.average_confidence)}",
+            "",
+            "<b>Финансовый результат</b>",
+            f"• Итоговая доходность: {_format_percent(training.net_return)}",
+            f"• Валовая прибыль: {_format_percent(details.gross_profit)}",
+            f"• Валовой убыток: {_format_percent(-details.gross_loss)}",
+            f"• Расчётные комиссии: {_format_percent(details.total_costs)}",
+            f"• Средняя сделка: {_format_percent(details.average_trade_return)}",
+            f"• Лучшая / худшая: {_format_percent(details.best_trade_return)} / "
+            f"{_format_percent(details.worst_trade_return)}",
+            f"• Последняя четверть сделок: {_format_percent(details.recent_return)}",
+            f"• Profit factor: {_format_metric(training.profit_factor)}",
+            f"• Max drawdown: {_format_percent(training.max_drawdown)}",
+            "",
+            "<b>Сравнение</b>",
+            f"• Baseline: {_format_percent(details.baseline_return)}",
+            (
+                f"• Champion: {_format_percent(details.champion_return)}"
+                if details.champion_return is not None
+                else "• Champion: <i>ещё отсутствовал</i>"
+            ),
+            "",
+            "<b>Критерии допуска</b>",
+            *_admission_checks(training),
+        )
+    )
+    if details.recent_trades:
+        lines.extend(("", "<b>Последние симулированные сделки</b>"))
+        lines.extend(_render_candidate_trade(item) for item in details.recent_trades)
+    return "\n".join(lines)
+
+
 def _progress_bar(percent: int) -> str:
     filled = min(10, max(0, percent) // 10)
     return "█" * filled + "░" * (10 - filled)
@@ -207,6 +319,17 @@ def _render_training(training: SystemTrainingInfo) -> list[str]:
         f"• Profit factor: {_format_metric(training.profit_factor)}",
         f"• Max drawdown: {_format_percent(training.max_drawdown)}",
     ]
+    if training.details is not None:
+        details = training.details
+        lines.extend(
+            (
+                f"• LONG/SHORT: <b>{details.long_trades}</b> / <b>{details.short_trades}</b> "
+                f"· без входа <b>{details.skipped_points}</b>",
+                f"• Win rate: {_format_percent(details.win_rate)} "
+                f"({details.winning_trades} / {details.losing_trades})",
+                f"• Последняя четверть сделок: {_format_percent(details.recent_return)}",
+            )
+        )
     if training.admission_reasons:
         lines.extend(("", "<b>Причины отклонения</b>"))
         lines.extend(f"• {_admission_reason(reason)}" for reason in training.admission_reasons)
@@ -240,6 +363,51 @@ def _admission_reason(reason: str) -> str:
         "RECENT_PERIOD_UNSTABLE": "последний период нестабилен",
         "INVALID_METRICS": "получены некорректные метрики",
     }.get(reason, escape(reason.lower().replace("_", " ")))
+
+
+def _admission_checks(training: SystemTrainingInfo) -> tuple[str, ...]:
+    details = training.details
+    if details is None:
+        return tuple(f"❌ {_admission_reason(reason)}" for reason in training.admission_reasons)
+    failures = set(training.admission_reasons)
+    if "INVALID_METRICS" in failures:
+        return ("❌ получены некорректные метрики",)
+    required_trades = training.required_closed_trades or 0
+    checks = (
+        ("NET_RETURN_NOT_POSITIVE", "доходность выше 0%"),
+        (
+            "MAX_DRAWDOWN_EXCEEDED",
+            f"просадка не выше {format_decimal(details.max_allowed_drawdown * 100)}%",
+        ),
+        (
+            "PROFIT_FACTOR_TOO_LOW",
+            f"profit factor не ниже {format_decimal(details.min_profit_factor)}",
+        ),
+        ("NOT_ENOUGH_TRADES", f"не менее {required_trades} сделок"),
+        ("DOES_NOT_BEAT_BASELINE", "доходность выше baseline"),
+        ("RECENT_PERIOD_UNSTABLE", "последний период не убыточен"),
+    )
+    result = [f"{'❌' if code in failures else '✅'} {label}" for code, label in checks]
+    if details.champion_return is not None:
+        result.append(
+            f"{'❌' if 'DOES_NOT_BEAT_CHAMPION' in failures else '✅'} доходность выше champion"
+        )
+    return tuple(result)
+
+
+def _render_candidate_trade(trade: CandidateTradeInfo) -> str:
+    icon = "🟢" if trade.direction == "LONG" else "🔴"
+    direction = escape(trade.direction)
+    return (
+        f"• {_format_timestamp(trade.occurred_at)} · {icon} <b>{direction}</b> · "
+        f"{format_decimal(trade.confidence * 100)}% · {_format_percent(trade.net_return)}"
+    )
+
+
+def _format_period(start: datetime | None, end: datetime | None) -> str:
+    if start is None or end is None:
+        return "не указан"
+    return f"{_format_timestamp(start)} — {_format_timestamp(end)}"
 
 
 def _group_health(health: Sequence[SystemHealthItem]) -> dict[str, list[SystemHealthItem]]:

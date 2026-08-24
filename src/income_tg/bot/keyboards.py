@@ -94,10 +94,24 @@ def system_keyboard() -> InlineKeyboardMarkup:
         inline_keyboard=[
             [InlineKeyboardButton(text="🔄 Обновить", callback_data="system:refresh")],
             [
+                InlineKeyboardButton(
+                    text="🔎 Подробнее о кандидате", callback_data="system:candidate"
+                )
+            ],
+            [
                 InlineKeyboardButton(text="📈 Сигналы", callback_data="menu:signals"),
                 InlineKeyboardButton(text="📊 Статистика", callback_data="menu:stats"),
             ],
             [InlineKeyboardButton(text="❓ Что означает статус?", callback_data="help:system")],
+        ]
+    )
+
+
+def candidate_details_keyboard() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(text="🔄 Обновить кандидата", callback_data="system:candidate")],
+            [InlineKeyboardButton(text="← Вернуться к системе", callback_data="system:refresh")],
         ]
     )
 
