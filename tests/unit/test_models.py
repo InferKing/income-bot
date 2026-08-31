@@ -103,14 +103,14 @@ def test_admission_rejects_non_finite_metrics(invalid: float) -> None:
     assert decision.reasons == ("INVALID_METRICS",)
 
 
-def test_admission_requires_twenty_trades_or_forty_percent_of_actionable_labels() -> None:
+def test_admission_requires_twenty_trades_or_twenty_percent_of_actionable_labels() -> None:
     accepted = evaluate_admission(
         net_return=0.2,
         max_drawdown=0.1,
         profit_factor=1.5,
-        closed_trades=32,
+        closed_trades=24,
         test_samples=159,
-        actionable_labels=80,
+        actionable_labels=120,
         profitable_walk_forward_windows=3,
         walk_forward_windows=4,
         beats_baseline=True,
@@ -120,9 +120,9 @@ def test_admission_requires_twenty_trades_or_forty_percent_of_actionable_labels(
         net_return=0.2,
         max_drawdown=0.1,
         profit_factor=1.5,
-        closed_trades=31,
+        closed_trades=23,
         test_samples=159,
-        actionable_labels=80,
+        actionable_labels=120,
         profitable_walk_forward_windows=3,
         walk_forward_windows=4,
         beats_baseline=True,

@@ -19,7 +19,7 @@ class AdmissionCriteria:
     min_profit_factor: float = 1.2
     min_actionable_labels: int = 30
     min_closed_trades: int = 20
-    min_closed_trade_fraction: float = 0.40
+    min_closed_trade_fraction: float = 0.20
     walk_forward_windows: int = 4
     min_profitable_walk_forward_windows: int = 3
 
