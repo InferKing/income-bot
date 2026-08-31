@@ -552,13 +552,26 @@ def _system_training_info(
         str(criteria.min_closed_trade_fraction)
     )
     test_samples = _integer_metric(metrics, "test_samples")
+    actionable_labels = _integer_metric(metrics, "actionable_labels")
+    actionable_basis = "min_actionable_labels" in parameters
+    if actionable_labels is None:
+        label_short = _integer_metric(metrics, "label_short") or 0
+        label_long = _integer_metric(metrics, "label_long") or 0
+        actionable_labels = label_short + label_long
+    trade_basis = actionable_labels if actionable_basis else test_samples
+    minimum_closed_trades = (
+        _integer_metric(parameters, "min_closed_trades") if actionable_basis else None
+    )
     required_closed_trades = (
-        int(
-            (Decimal(test_samples) * required_trade_fraction).to_integral_value(
-                rounding=ROUND_CEILING
-            )
+        max(
+            minimum_closed_trades or 0,
+            int(
+                (Decimal(trade_basis) * required_trade_fraction).to_integral_value(
+                    rounding=ROUND_CEILING
+                )
+            ),
         )
-        if test_samples is not None and test_samples > 0
+        if trade_basis is not None and trade_basis > 0
         else None
     )
     details = _candidate_detail_info(metrics, parameters)
@@ -579,6 +592,7 @@ def _system_training_info(
             tuple(str(reason) for reason in reasons) if isinstance(reasons, list) else ()
         ),
         details=details,
+        required_trade_basis=("actionable_labels" if actionable_basis else "test"),
     )
 
 
@@ -631,7 +645,30 @@ def _candidate_detail_info(
             or Decimal(str(criteria.min_profit_factor))
         ),
         recent_trades=_candidate_trades(metrics.get("recent_trades")),
+        walk_forward_returns=_decimal_sequence(metrics.get("walk_forward_returns")),
+        min_actionable_labels=(
+            _integer_metric(parameters, "min_actionable_labels") or criteria.min_actionable_labels
+        ),
+        min_profitable_walk_forward_windows=(
+            _integer_metric(parameters, "min_profitable_walk_forward_windows")
+            or criteria.min_profitable_walk_forward_windows
+        ),
+        walk_forward_windows=(
+            _integer_metric(parameters, "walk_forward_windows") or criteria.walk_forward_windows
+        ),
     )
+
+
+def _decimal_sequence(value: object) -> tuple[Decimal, ...]:
+    if not isinstance(value, list):
+        return ()
+    result: list[Decimal] = []
+    for item in value:
+        try:
+            result.append(Decimal(str(item)))
+        except Exception:
+            continue
+    return tuple(result)
 
 
 def _candidate_trades(value: object) -> tuple[CandidateTradeInfo, ...]:

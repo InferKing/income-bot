@@ -7,6 +7,8 @@ from typing import cast
 from income_tg.jobs import (
     ActivationReceipt,
     CandidateAssessment,
+    RetrainingOutcome,
+    RetrainingSkipped,
     RetrainingStatus,
     RetrainingWorkflow,
     WeeklyRetrainingJob,
@@ -72,7 +74,7 @@ class FakeActivator:
 
 
 def passing_assessment() -> CandidateAssessment:
-    return CandidateAssessment(0.2, 0.1, 1.5, 30, 150, True, True)
+    return CandidateAssessment(0.2, 0.1, 1.5, 30, 150, 50, 3, 4, True, True)
 
 
 async def test_accepted_challenger_is_registered_evaluated_and_promoted() -> None:
@@ -93,7 +95,7 @@ async def test_accepted_challenger_is_registered_evaluated_and_promoted() -> Non
 
 
 async def test_rejected_challenger_never_changes_active_model() -> None:
-    assessment = CandidateAssessment(-0.01, 0.2, 0.8, 10, 150, False, False)
+    assessment = CandidateAssessment(-0.01, 0.2, 0.8, 10, 150, 50, 0, 4, False, False)
     activator = FakeActivator()
     workflow = RetrainingWorkflow(
         FakeTrainer(fake_model("bad")),
@@ -143,3 +145,16 @@ async def test_weekly_job_exposes_last_outcome_and_summary() -> None:
 
     assert summary == "PROMOTED:v2"
     assert job.last_outcome is not None
+
+
+async def test_weekly_job_reports_skipped_attempt_without_failing_schedule() -> None:
+    class SkippedWorkflow:
+        async def run(self) -> RetrainingOutcome:
+            raise RetrainingSkipped("new_labeled_points=0;required=12")
+
+    job = WeeklyRetrainingJob(SkippedWorkflow())
+
+    summary = await job(datetime(2026, 8, 10, tzinfo=UTC))
+
+    assert summary == "SKIPPED:new_labeled_points=0;required=12"
+    assert job.last_outcome is None
