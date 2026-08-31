@@ -75,6 +75,9 @@ def test_probability_metrics_and_admission() -> None:
         profit_factor=1.5,
         closed_trades=120,
         test_samples=500,
+        actionable_labels=200,
+        profitable_walk_forward_windows=3,
+        walk_forward_windows=4,
         beats_baseline=True,
         recent_period_stable=True,
     )
@@ -89,6 +92,9 @@ def test_admission_rejects_non_finite_metrics(invalid: float) -> None:
         profit_factor=invalid,
         closed_trades=120,
         test_samples=500,
+        actionable_labels=200,
+        profitable_walk_forward_windows=3,
+        walk_forward_windows=4,
         beats_baseline=True,
         beats_champion=True,
         recent_period_stable=True,
@@ -97,13 +103,16 @@ def test_admission_rejects_non_finite_metrics(invalid: float) -> None:
     assert decision.reasons == ("INVALID_METRICS",)
 
 
-def test_admission_requires_twenty_percent_of_test_samples() -> None:
+def test_admission_requires_twenty_trades_or_forty_percent_of_actionable_labels() -> None:
     accepted = evaluate_admission(
         net_return=0.2,
         max_drawdown=0.1,
         profit_factor=1.5,
         closed_trades=32,
         test_samples=159,
+        actionable_labels=80,
+        profitable_walk_forward_windows=3,
+        walk_forward_windows=4,
         beats_baseline=True,
         recent_period_stable=True,
     )
@@ -113,12 +122,35 @@ def test_admission_requires_twenty_percent_of_test_samples() -> None:
         profit_factor=1.5,
         closed_trades=31,
         test_samples=159,
+        actionable_labels=80,
+        profitable_walk_forward_windows=3,
+        walk_forward_windows=4,
         beats_baseline=True,
         recent_period_stable=True,
     )
 
     assert accepted.accepted is True
     assert rejected.reasons == ("NOT_ENOUGH_TRADES",)
+
+
+def test_admission_requires_thirty_actionable_labels_and_three_profitable_windows() -> None:
+    decision = evaluate_admission(
+        net_return=0.2,
+        max_drawdown=0.1,
+        profit_factor=1.5,
+        closed_trades=20,
+        test_samples=159,
+        actionable_labels=29,
+        profitable_walk_forward_windows=2,
+        walk_forward_windows=4,
+        beats_baseline=True,
+        recent_period_stable=True,
+    )
+
+    assert decision.reasons == (
+        "INSUFFICIENT_ACTIONABLE_LABELS",
+        "NOT_ENOUGH_PROFITABLE_WINDOWS",
+    )
 
 
 def test_probability_metrics_rejects_non_finite_probability() -> None:

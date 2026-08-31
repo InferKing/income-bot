@@ -5,8 +5,13 @@ from uuid import uuid4
 import numpy as np
 import pytest
 
-from income_tg.jobs.database_training import TrainingTarget, _strategy_metrics
+from income_tg.jobs.database_training import (
+    TrainingTarget,
+    _select_confidence_threshold,
+    _strategy_metrics,
+)
 from income_tg.models.dataset import LabeledDataset
+from income_tg.models.evaluation import AdmissionCriteria
 from income_tg.models.inference import EnsembleModel, ModelPrediction
 from income_tg.models.training import ChronologicalDataset
 
@@ -27,6 +32,31 @@ class PredictableModel:
     ) -> ModelPrediction:
         del feature_names, values
         probability_up = next(self._probabilities)
+        return ModelPrediction(
+            as_of=as_of,
+            probability_up=probability_up,
+            probability_down=1 - probability_up,
+            probability_no_trade=0.0,
+            confidence=max(probability_up, 1 - probability_up),
+            expected_directional_score=probability_up - 0.5,
+            contributions=(),
+            model_version="candidate",
+        )
+
+
+class FeatureProbabilityModel:
+    feature_names = ("signal",)
+    confidence_threshold = 0.70
+
+    def predict(
+        self,
+        *,
+        as_of: datetime,
+        feature_names: tuple[str, ...],
+        values: tuple[float, ...],
+    ) -> ModelPrediction:
+        del feature_names
+        probability_up = values[0]
         return ModelPrediction(
             as_of=as_of,
             probability_up=probability_up,
@@ -76,3 +106,28 @@ def test_strategy_metrics_describe_candidate_actions_and_recent_trades() -> None
     assert metrics.recent_return == pytest.approx(-0.0065)
     assert tuple(item.direction for item in metrics.recent_trades) == ("LONG", "SHORT", "LONG")
     assert metrics.recent_trades[-1].occurred_at == timestamps[-1]
+
+
+def test_threshold_is_selected_on_validation_return_with_required_trade_coverage() -> None:
+    start = datetime(2026, 8, 24, 10, tzinfo=UTC)
+    validation = LabeledDataset(
+        dataset=ChronologicalDataset(
+            timestamps=tuple(start + timedelta(minutes=15 * index) for index in range(4)),
+            feature_names=("signal",),
+            features=np.asarray([[0.55], [0.60], [0.70], [0.80]], dtype=np.float64),
+            targets=np.asarray([1, 1, 1, 1], dtype=np.int64),
+        ),
+        forward_returns=(-0.10, -0.10, 0.02, 0.02),
+    )
+    target = TrainingTarget(uuid4(), "15m", timedelta(minutes=15))
+    criteria = AdmissionCriteria(
+        min_actionable_labels=1,
+        min_closed_trades=2,
+        min_closed_trade_fraction=0.5,
+    )
+
+    threshold = _select_confidence_threshold(
+        cast(EnsembleModel, FeatureProbabilityModel()), validation, target, criteria
+    )
+
+    assert threshold == pytest.approx(0.70)

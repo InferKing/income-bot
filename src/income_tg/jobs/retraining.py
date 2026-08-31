@@ -51,6 +51,7 @@ class CandidateDetails:
     label_short: int
     label_no_trade: int
     label_long: int
+    walk_forward_returns: tuple[float, ...]
     recent_return: float
     baseline_return: float
     champion_return: float | None
@@ -64,6 +65,9 @@ class CandidateAssessment:
     profit_factor: float
     closed_trades: int
     test_samples: int
+    actionable_labels: int
+    profitable_walk_forward_windows: int
+    walk_forward_windows: int
     beats_baseline: bool
     recent_period_stable: bool
     beats_champion: bool = True
@@ -114,6 +118,10 @@ class RetrainingRunner(Protocol):
     async def run(self) -> RetrainingOutcome: ...
 
 
+class RetrainingSkipped(RuntimeError):
+    """Raised when a scheduled attempt has no sufficiently new labeled data."""
+
+
 class RetrainingWorkflow:
     def __init__(
         self,
@@ -146,6 +154,9 @@ class RetrainingWorkflow:
             profit_factor=assessment.profit_factor,
             closed_trades=assessment.closed_trades,
             test_samples=assessment.test_samples,
+            actionable_labels=assessment.actionable_labels,
+            profitable_walk_forward_windows=assessment.profitable_walk_forward_windows,
+            walk_forward_windows=assessment.walk_forward_windows,
             beats_baseline=assessment.beats_baseline,
             recent_period_stable=assessment.recent_period_stable,
             beats_champion=assessment.beats_champion,
@@ -196,7 +207,10 @@ class WeeklyRetrainingJob:
 
     async def __call__(self, scheduled_for: datetime) -> str:
         del scheduled_for
-        self.last_outcome = await self.workflow.run()
+        try:
+            self.last_outcome = await self.workflow.run()
+        except RetrainingSkipped as error:
+            return f"SKIPPED:{error}"
         return self.last_outcome.summary()
 
 

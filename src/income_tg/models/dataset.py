@@ -104,6 +104,18 @@ def chronological_train_test(
     return _slice(labeled, 0, split), _slice(labeled, split, len(labeled.dataset.timestamps))
 
 
+def chronological_windows(labeled: LabeledDataset, window_count: int) -> tuple[LabeledDataset, ...]:
+    if window_count <= 0:
+        raise ValueError("window_count must be positive")
+    samples = len(labeled.dataset.timestamps)
+    if samples < window_count:
+        raise ValueError("Для временных окон недостаточно размеченных векторов")
+    boundaries = [samples * index // window_count for index in range(window_count + 1)]
+    return tuple(
+        _slice(labeled, boundaries[index], boundaries[index + 1]) for index in range(window_count)
+    )
+
+
 def _slice(labeled: LabeledDataset, start: int, end: int) -> LabeledDataset:
     dataset = labeled.dataset
     return LabeledDataset(

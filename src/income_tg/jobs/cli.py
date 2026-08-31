@@ -20,6 +20,7 @@ from income_tg.jobs.database_training import (
 from income_tg.jobs.retention import OrderbookRetentionJob, orderbook_retention_definition
 from income_tg.jobs.retraining import (
     RetrainingRunner,
+    RetrainingSkipped,
     RetrainingWorkflow,
     weekly_retraining_definition,
 )
@@ -48,8 +49,8 @@ async def run(args: argparse.Namespace) -> None:
         registry = FileModelRegistry(args.model_dir)
         criteria = AdmissionCriteria()
         base_workflow = RetrainingWorkflow(
-            trainer=DatabaseCandidateTrainer(database.session_factory, target),
-            evaluator=DatabaseCandidateEvaluator(database.session_factory, target),
+            trainer=DatabaseCandidateTrainer(database.session_factory, target, criteria),
+            evaluator=DatabaseCandidateEvaluator(database.session_factory, target, criteria),
             registry=registry,
             activator=FileModelActivator(registry),
             activation_check=_activation_check,
@@ -61,6 +62,7 @@ async def run(args: argparse.Namespace) -> None:
             registry,
             target,
             criteria,
+            minimum_new_labeled_points=(0 if args.run_once else 12),
         )
         if args.run_once:
             await workflow.run()
@@ -138,6 +140,8 @@ async def _bootstrap_until_champion(
             logger.info("bootstrap_retraining_completed", outcome=outcome.summary())
             if outcome.decision.accepted:
                 return
+        except RetrainingSkipped as error:
+            logger.info("bootstrap_retraining_skipped", reason=str(error))
         except Exception:
             logger.exception("bootstrap_retraining_waiting_for_data")
         try:

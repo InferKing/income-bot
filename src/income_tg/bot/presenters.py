@@ -66,6 +66,10 @@ class CandidateDetailInfo:
     max_allowed_drawdown: Decimal
     min_profit_factor: Decimal
     recent_trades: tuple[CandidateTradeInfo, ...]
+    walk_forward_returns: tuple[Decimal, ...] = ()
+    min_actionable_labels: int = 30
+    min_profitable_walk_forward_windows: int = 3
+    walk_forward_windows: int = 4
 
 
 @dataclass(frozen=True, slots=True)
@@ -84,6 +88,7 @@ class SystemTrainingInfo:
     required_trade_fraction: Decimal
     admission_reasons: tuple[str, ...]
     details: CandidateDetailInfo | None = None
+    required_trade_basis: str = "test"
 
 
 def render_portfolios(portfolios: list[PortfolioBalance], manual_usdt_rub_rate: Decimal) -> str:
@@ -268,6 +273,11 @@ def render_candidate_details(training: SystemTrainingInfo) -> str:
             f"• Последняя четверть сделок: {_format_percent(details.recent_return)}",
             f"• Profit factor: {_format_metric(training.profit_factor)}",
             f"• Max drawdown: {_format_percent(training.max_drawdown)}",
+            (
+                "• Прибыльных временных окон: "
+                f"<b>{sum(value > 0 for value in details.walk_forward_returns)}</b> / "
+                f"<b>{len(details.walk_forward_returns)}</b>"
+            ),
             "",
             "<b>Сравнение</b>",
             f"• Baseline: {_format_percent(details.baseline_return)}",
@@ -324,12 +334,18 @@ def _render_training(training: SystemTrainingInfo) -> list[str]:
     attempted_at = training.finished_at or training.started_at
     closed_trades = training.closed_trades if training.closed_trades is not None else "—"
     minimum_percent = format_decimal(training.required_trade_fraction * Decimal("100"))
+    fraction_basis = (
+        "торговых меток" if training.required_trade_basis == "actionable_labels" else "теста"
+    )
     if training.required_closed_trades is None:
-        trades_line = f"• Сделок: <b>{closed_trades}</b> · минимум <b>{minimum_percent}%</b> теста"
+        trades_line = (
+            f"• Сделок: <b>{closed_trades}</b> · минимум <b>{minimum_percent}%</b> {fraction_basis}"
+        )
     else:
         trades_line = (
             f"• Сделок: <b>{closed_trades}</b> из необходимых "
-            f"<b>{training.required_closed_trades}</b> ({minimum_percent}% теста)"
+            f"<b>{training.required_closed_trades}</b> "
+            f"({minimum_percent}% {fraction_basis})"
         )
     lines = [
         "<b>Последняя попытка обучения</b>",
@@ -385,6 +401,8 @@ def _admission_reason(reason: str) -> str:
         "DOES_NOT_BEAT_BASELINE": "не обгоняет baseline",
         "DOES_NOT_BEAT_CHAMPION": "не обгоняет действующий champion",
         "RECENT_PERIOD_UNSTABLE": "последний период нестабилен",
+        "INSUFFICIENT_ACTIONABLE_LABELS": "недостаточно торговых меток",
+        "NOT_ENOUGH_PROFITABLE_WINDOWS": "прибыльных временных окон меньше минимума",
         "INVALID_METRICS": "получены некорректные метрики",
     }.get(reason, escape(reason.lower().replace("_", " ")))
 
@@ -398,6 +416,10 @@ def _admission_checks(training: SystemTrainingInfo) -> tuple[str, ...]:
         return ("❌ получены некорректные метрики",)
     required_trades = training.required_closed_trades or 0
     checks = (
+        (
+            "INSUFFICIENT_ACTIONABLE_LABELS",
+            f"не менее {details.min_actionable_labels} торговых меток",
+        ),
         ("NET_RETURN_NOT_POSITIVE", "доходность выше 0%"),
         (
             "MAX_DRAWDOWN_EXCEEDED",
@@ -410,6 +432,12 @@ def _admission_checks(training: SystemTrainingInfo) -> tuple[str, ...]:
         ("NOT_ENOUGH_TRADES", f"не менее {required_trades} сделок"),
         ("DOES_NOT_BEAT_BASELINE", "доходность выше baseline"),
         ("RECENT_PERIOD_UNSTABLE", "последний период не убыточен"),
+        (
+            "NOT_ENOUGH_PROFITABLE_WINDOWS",
+            "не менее "
+            f"{details.min_profitable_walk_forward_windows} из "
+            f"{details.walk_forward_windows} прибыльных временных окон",
+        ),
     )
     result = [f"{'❌' if code in failures else '✅'} {label}" for code, label in checks]
     if details.champion_return is not None:
