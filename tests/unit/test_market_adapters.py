@@ -131,6 +131,24 @@ async def test_bybit_derivatives_use_backward_as_of_funding_only() -> None:
                     ]
                 },
             },
+            {
+                "retCode": 0,
+                "result": {
+                    "list": [
+                        [str(observation_ms - 3_600_000), "10", "12", "9", "11"],
+                        [str(observation_ms), "20", "22", "19", "21"],
+                    ]
+                },
+            },
+            {
+                "retCode": 0,
+                "result": {
+                    "list": [
+                        [str(observation_ms - 3_600_000), "9", "11", "8", "10"],
+                        [str(observation_ms), "19", "21", "18", "20"],
+                    ]
+                },
+            },
         ]
     )
     adapter = BybitAdapter(rest, FakeWebSocket([]))
@@ -143,9 +161,11 @@ async def test_bybit_derivatives_use_backward_as_of_funding_only() -> None:
     )
 
     assert metrics[0].funding_rate == Decimal("0.001")
-    assert metrics[0].mark_price is None
-    assert metrics[0].index_price is None
-    assert len(rest.calls) == 2
+    assert metrics[0].mark_price == Decimal("11")
+    assert metrics[0].index_price == Decimal("10")
+    assert len(rest.calls) == 4
+    assert rest.calls[2][1].endswith("/v5/market/mark-price-kline")
+    assert rest.calls[3][1].endswith("/v5/market/index-price-kline")
 
 
 @pytest.mark.asyncio

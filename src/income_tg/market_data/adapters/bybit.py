@@ -3,7 +3,8 @@
 from __future__ import annotations
 
 from collections.abc import AsyncIterator, Mapping
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
+from decimal import Decimal
 from time import perf_counter
 from typing import Any
 
@@ -221,12 +222,32 @@ class BybitAdapter(MarketDataAdapter):
         funding_payload = await self._rest.request_json(
             "GET", f"{self._rest_url}/v5/market/funding/history", params=common
         )
+        price_params = {
+            "category": "linear",
+            "symbol": bybit_symbol(instrument),
+            "interval": "60",
+            "start": str(int((start - timedelta(hours=1)).timestamp() * 1000)),
+            "end": str(int(end.timestamp() * 1000)),
+            "limit": "200",
+        }
+        mark_price_payload = await self._rest.request_json(
+            "GET",
+            f"{self._rest_url}/v5/market/mark-price-kline",
+            params=price_params,
+        )
+        index_price_payload = await self._rest.request_json(
+            "GET",
+            f"{self._rest_url}/v5/market/index-price-kline",
+            params=price_params,
+        )
         funding_rows = self._result(funding_payload).get("list", [])
         funding_by_time = {
             int(row["fundingRateTimestamp"]): decimal_value(row["fundingRate"], field="funding")
             for row in funding_rows
             if isinstance(row, Mapping)
         }
+        mark_prices = self._closed_price_by_time(mark_price_payload)
+        index_prices = self._closed_price_by_time(index_price_payload)
         rows = self._result(open_interest_payload).get("list", [])
         result: list[DerivativesMetrics] = []
         for row in rows:
@@ -236,6 +257,10 @@ class BybitAdapter(MarketDataAdapter):
             # Strict backward as-of join: future funding must never change a past row.
             eligible_funding = (item for item in funding_by_time if item <= timestamp)
             latest_funding = max(eligible_funding, default=None)
+            eligible_mark_prices = (item for item in mark_prices if item <= timestamp)
+            eligible_index_prices = (item for item in index_prices if item <= timestamp)
+            latest_mark_price = max(eligible_mark_prices, default=None)
+            latest_index_price = max(eligible_index_prices, default=None)
             result.append(
                 DerivativesMetrics(
                     instrument=instrument,
@@ -246,15 +271,28 @@ class BybitAdapter(MarketDataAdapter):
                     funding_rate=(
                         funding_by_time[latest_funding] if latest_funding is not None else None
                     ),
-                    # The ticker endpoint only exposes the current value. Attaching it to
-                    # historical OI would leak the future; historical mark/index series
-                    # must be collected separately before these fields can be populated.
-                    mark_price=None,
-                    index_price=None,
+                    mark_price=(
+                        mark_prices[latest_mark_price] if latest_mark_price is not None else None
+                    ),
+                    index_price=(
+                        index_prices[latest_index_price] if latest_index_price is not None else None
+                    ),
                     source=DataSource.BYBIT,
                 )
             )
         return sorted(result, key=lambda item: item.occurred_at)
+
+    def _closed_price_by_time(self, payload: Mapping[str, Any]) -> dict[int, Decimal]:
+        result: dict[int, Decimal] = {}
+        rows = self._result(payload).get("list", [])
+        for row in rows:
+            if not isinstance(row, list) or len(row) < 5:
+                continue
+            # The API timestamps a kline at its open. Key it by close time so an
+            # observation can only consume a candle that had already completed.
+            close_time = int(row[0]) + 3_600_000
+            result[close_time] = decimal_value(row[4], field="derivatives_price")
+        return result
 
     async def get_instrument_spec(self, instrument: Instrument) -> InstrumentSpec:
         payload = await self._rest.request_json(
