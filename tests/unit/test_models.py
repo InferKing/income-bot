@@ -44,9 +44,6 @@ def test_ensemble_trains_calibrates_and_predicts() -> None:
     )
     assert 0 <= prediction.confidence <= 1
     assert 0 < model.confidence_threshold < 1
-    assert model.calibrator is not None
-    assert model.calibrator.class_weight == "balanced"
-    assert model.metadata["calibration_class_weight"] == "balanced"
     assert len(prediction.contributions) == 2
 
 

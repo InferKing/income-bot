@@ -41,6 +41,7 @@ class TrainingTarget:
     round_trip_cost: float = 0.0015
     minimum_edge: float = 0.0005
     target_action_fraction: float = 0.20
+    candle_provider: str = "bybit"
 
     @property
     def minimum_actionable_return(self) -> float:
@@ -66,6 +67,7 @@ class DatabaseCandidateTrainer:
                 horizon=self.target.horizon,
                 horizon_duration=self.target.horizon_duration,
                 minimum_actionable_return=self.target.minimum_actionable_return,
+                candle_provider=self.target.candle_provider,
             )
         model_training, threshold_validation = _model_training_partitions(labeled)
         model = train_ensemble(
@@ -115,6 +117,7 @@ class DatabaseCandidateEvaluator:
                 horizon=self.target.horizon,
                 horizon_duration=self.target.horizon_duration,
                 minimum_actionable_return=self.target.minimum_actionable_return,
+                candle_provider=self.target.candle_provider,
             )
         _, test = chronological_train_test(labeled)
         challenger_metrics = _strategy_metrics(challenger, test, self.target)
@@ -247,6 +250,7 @@ class PersistedRetrainingWorkflow:
                     "minimum_edge": self._target.minimum_edge,
                     "minimum_actionable_return": self._target.minimum_actionable_return,
                     "target_action_fraction": self._target.target_action_fraction,
+                    "candle_provider": self._target.candle_provider,
                     "max_drawdown": self._criteria.max_drawdown,
                     "min_profit_factor": self._criteria.min_profit_factor,
                     "min_actionable_labels": self._criteria.min_actionable_labels,
@@ -319,6 +323,7 @@ class PersistedRetrainingWorkflow:
                 horizon=self._target.horizon,
                 horizon_duration=self._target.horizon_duration,
                 minimum_actionable_return=self._target.minimum_actionable_return,
+                candle_provider=self._target.candle_provider,
             )
 
     async def _last_labeled_samples(self) -> int | None:

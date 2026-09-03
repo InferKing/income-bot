@@ -27,9 +27,12 @@ async def load_labeled_dataset(
     horizon: str,
     horizon_duration: timedelta,
     minimum_actionable_return: float = 0.0,
+    candle_provider: str = "bybit",
 ) -> LabeledDataset:
     if not math.isfinite(minimum_actionable_return) or minimum_actionable_return < 0:
         raise ValueError("minimum_actionable_return must be finite and non-negative")
+    if not candle_provider.strip():
+        raise ValueError("candle_provider must not be empty")
     vectors = list(
         await session.scalars(
             select(FeatureVectorRecord)
@@ -45,6 +48,7 @@ async def load_labeled_dataset(
             select(MarketCandleRecord)
             .where(
                 MarketCandleRecord.instrument_id == instrument_id,
+                MarketCandleRecord.provider == candle_provider,
                 MarketCandleRecord.is_closed.is_(True),
             )
             .order_by(MarketCandleRecord.opened_at)

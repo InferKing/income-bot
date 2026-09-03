@@ -79,11 +79,9 @@ def train_ensemble(
     calibrator: LogisticRegression | None = None
     if set(np.unique(calibration_y)) == {-1, 0, 1}:
         clipped = np.clip(raw_probabilities, 1e-6, 1 - 1e-6)
-        calibrator = LogisticRegression(
-            max_iter=2_000,
-            class_weight="balanced",
-            random_state=random_state,
-        ).fit(np.log(clipped), calibration_y)
+        calibrator = LogisticRegression(max_iter=2_000, random_state=random_state).fit(
+            np.log(clipped), calibration_y
+        )
 
     calibrated = (
         raw_probabilities
@@ -115,7 +113,6 @@ def train_ensemble(
             "train_samples": split,
             "calibration_samples": len(dataset.features) - split,
             "calibration": "multinomial" if calibrator is not None else "identity",
-            "calibration_class_weight": "balanced" if calibrator is not None else None,
             "calibration_actionable": len(actionable),
             "calibration_required_actions": required_actions,
             "target_action_fraction": target_action_fraction,
