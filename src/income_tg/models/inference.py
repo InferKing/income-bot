@@ -39,6 +39,11 @@ class EnsembleModel:
         value = self.metadata.get("confidence_threshold", 0.70)
         return float(value) if isinstance(value, int | float) else 0.70
 
+    @property
+    def logistic_weight(self) -> float:
+        value = self.metadata.get("logistic_weight", 0.5)
+        return float(value) if isinstance(value, int | float) else 0.5
+
     def predict(
         self,
         *,
@@ -52,9 +57,12 @@ class EnsembleModel:
         if not np.isfinite(array).all():
             raise ValueError("Признаки содержат NaN или бесконечность")
         scaled = self.scaler.transform(array)
+        logistic_probabilities = self.logistic.predict_proba(scaled)[0]
+        forest_probabilities = self.forest.predict_proba(array)[0]
         raw_probabilities = (
-            self.logistic.predict_proba(scaled)[0] + self.forest.predict_proba(array)[0]
-        ) / 2
+            self.logistic_weight * logistic_probabilities
+            + (1 - self.logistic_weight) * forest_probabilities
+        )
         calibrated = self._calibrate(raw_probabilities)
         probabilities = {
             int(label): float(probability)

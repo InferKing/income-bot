@@ -1,7 +1,8 @@
 from __future__ import annotations
 
+from bisect import bisect_left
 from dataclasses import dataclass
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from uuid import uuid4
 
 import numpy as np
@@ -41,17 +42,29 @@ def train_ensemble(
     dataset: ChronologicalDataset,
     *,
     calibration_fraction: float = 0.2,
+    calibration_embargo: timedelta | None = None,
     target_action_fraction: float = 0.2,
+    logistic_weight: float = 0.5,
     random_state: int = 42,
 ) -> EnsembleModel:
     dataset.validate()
     if not 0.1 <= calibration_fraction <= 0.4:
         raise ValueError("calibration_fraction должна находиться в диапазоне 0.1..0.4")
+    if calibration_embargo is not None and calibration_embargo < timedelta(0):
+        raise ValueError("calibration_embargo must not be negative")
     if not 0 < target_action_fraction < 1:
         raise ValueError("target_action_fraction должна находиться между 0 и 1")
+    if not 0 <= logistic_weight <= 1:
+        raise ValueError("logistic_weight must be between zero and one")
     split = int(len(dataset.features) * (1 - calibration_fraction))
-    train_x = dataset.features[:split]
-    train_y = dataset.targets[:split]
+    training_end = split
+    if calibration_embargo:
+        cutoff = dataset.timestamps[split] - calibration_embargo
+        training_end = bisect_left(dataset.timestamps, cutoff, hi=split)
+    if training_end <= 0:
+        raise ValueError("Calibration embargo удаляет всю обучающую выборку")
+    train_x = dataset.features[:training_end]
+    train_y = dataset.targets[:training_end]
     calibration_x = dataset.features[split:]
     calibration_y = dataset.targets[split:]
     if set(np.unique(train_y)) != {-1, 0, 1}:
@@ -72,10 +85,9 @@ def train_ensemble(
         n_jobs=1,
     ).fit(train_x, train_y)
 
-    raw_probabilities = (
-        logistic.predict_proba(scaler.transform(calibration_x))
-        + forest.predict_proba(calibration_x)
-    ) / 2
+    raw_probabilities = logistic_weight * logistic.predict_proba(
+        scaler.transform(calibration_x)
+    ) + (1 - logistic_weight) * forest.predict_proba(calibration_x)
     calibrator: LogisticRegression | None = None
     if set(np.unique(calibration_y)) == {-1, 0, 1}:
         clipped = np.clip(raw_probabilities, 1e-6, 1 - 1e-6)
@@ -110,12 +122,14 @@ def train_ensemble(
         trained_at=datetime.now(UTC),
         metadata={
             "samples": len(dataset.features),
-            "train_samples": split,
+            "train_samples": training_end,
+            "purged_calibration_samples": split - training_end,
             "calibration_samples": len(dataset.features) - split,
             "calibration": "multinomial" if calibrator is not None else "identity",
             "calibration_actionable": len(actionable),
             "calibration_required_actions": required_actions,
             "target_action_fraction": target_action_fraction,
+            "logistic_weight": logistic_weight,
             "confidence_threshold": confidence_threshold,
             "random_state": random_state,
         },

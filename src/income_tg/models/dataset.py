@@ -100,12 +100,26 @@ def classify_forward_return(forward_return: float, minimum_actionable_return: fl
 
 
 def chronological_train_test(
-    labeled: LabeledDataset, test_fraction: float = 0.2
+    labeled: LabeledDataset,
+    test_fraction: float = 0.2,
+    *,
+    embargo: timedelta | None = None,
 ) -> tuple[LabeledDataset, LabeledDataset]:
     if not 0.1 <= test_fraction <= 0.4:
         raise ValueError("test_fraction должна находиться в диапазоне 0.1..0.4")
+    if embargo is not None and embargo < timedelta(0):
+        raise ValueError("embargo must not be negative")
     split = int(len(labeled.dataset.timestamps) * (1 - test_fraction))
-    return _slice(labeled, 0, split), _slice(labeled, split, len(labeled.dataset.timestamps))
+    training_end = split
+    if embargo and split < len(labeled.dataset.timestamps):
+        cutoff = labeled.dataset.timestamps[split] - embargo
+        training_end = bisect_left(labeled.dataset.timestamps, cutoff, hi=split)
+    if training_end <= 0:
+        raise ValueError("Embargo удаляет всю обучающую выборку")
+    return (
+        _slice(labeled, 0, training_end),
+        _slice(labeled, split, len(labeled.dataset.timestamps)),
+    )
 
 
 def chronological_windows(labeled: LabeledDataset, window_count: int) -> tuple[LabeledDataset, ...]:

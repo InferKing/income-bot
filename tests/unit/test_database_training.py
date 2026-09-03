@@ -93,6 +93,31 @@ def test_threshold_validation_is_disjoint_from_model_training_and_final_test() -
     assert set(threshold_validation.dataset.timestamps).isdisjoint(timestamps[80:])
 
 
+def test_training_partitions_purge_overlapping_label_horizons() -> None:
+    start = datetime(2026, 8, 24, 10, tzinfo=UTC)
+    timestamps = tuple(start + timedelta(minutes=index) for index in range(100))
+    labeled = LabeledDataset(
+        dataset=ChronologicalDataset(
+            timestamps=timestamps,
+            feature_names=("signal",),
+            features=np.arange(100, dtype=np.float64).reshape(-1, 1),
+            targets=np.asarray(([-1, 0, 1, 0] * 25), dtype=np.int64),
+        ),
+        forward_returns=tuple(0.001 * (index % 3 - 1) for index in range(100)),
+    )
+
+    model_training, threshold_validation = _model_training_partitions(
+        labeled, embargo=timedelta(minutes=5)
+    )
+
+    assert model_training.dataset.timestamps[-1] == timestamps[54]
+    assert threshold_validation.dataset.timestamps[0] == timestamps[60]
+    assert (
+        model_training.dataset.timestamps[-1] + timedelta(minutes=5)
+        < (threshold_validation.dataset.timestamps[0])
+    )
+
+
 def test_strategy_metrics_describe_candidate_actions_and_recent_trades() -> None:
     start = datetime(2026, 8, 24, 10, tzinfo=UTC)
     timestamps = tuple(start + timedelta(minutes=15 * index) for index in range(4))

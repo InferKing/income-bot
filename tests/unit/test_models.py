@@ -44,7 +44,16 @@ def test_ensemble_trains_calibrates_and_predicts() -> None:
     )
     assert 0 <= prediction.confidence <= 1
     assert 0 < model.confidence_threshold < 1
+    assert model.logistic_weight == 0.5
     assert len(prediction.contributions) == 2
+
+
+def test_ensemble_supports_individual_model_weights() -> None:
+    logistic = train_ensemble(_dataset(), logistic_weight=1.0)
+    forest = train_ensemble(_dataset(), logistic_weight=0.0)
+
+    assert logistic.logistic_weight == 1.0
+    assert forest.logistic_weight == 0.0
 
 
 @pytest.mark.parametrize(

@@ -69,9 +69,12 @@ class DatabaseCandidateTrainer:
                 minimum_actionable_return=self.target.minimum_actionable_return,
                 candle_provider=self.target.candle_provider,
             )
-        model_training, threshold_validation = _model_training_partitions(labeled)
+        model_training, threshold_validation = _model_training_partitions(
+            labeled, embargo=self.target.horizon_duration
+        )
         model = train_ensemble(
             model_training.dataset,
+            calibration_embargo=self.target.horizon_duration,
             target_action_fraction=self.target.target_action_fraction,
         )
         selected_threshold = _select_confidence_threshold(
@@ -119,7 +122,7 @@ class DatabaseCandidateEvaluator:
                 minimum_actionable_return=self.target.minimum_actionable_return,
                 candle_provider=self.target.candle_provider,
             )
-        _, test = chronological_train_test(labeled)
+        _, test = chronological_train_test(labeled, embargo=self.target.horizon_duration)
         challenger_metrics = _strategy_metrics(challenger, test, self.target)
         actionable_labels = int((test.dataset.targets != 0).sum())
         walk_forward_returns = tuple(
@@ -415,10 +418,12 @@ def _predict_points(
 
 def _model_training_partitions(
     labeled: LabeledDataset,
+    *,
+    embargo: timedelta | None = None,
 ) -> tuple[LabeledDataset, LabeledDataset]:
     """Keep threshold selection strictly out of the model and calibrator fit."""
-    training, _ = chronological_train_test(labeled)
-    return chronological_train_test(training)
+    training, _ = chronological_train_test(labeled, embargo=embargo)
+    return chronological_train_test(training, embargo=embargo)
 
 
 def _strategy_metrics_from_predictions(
