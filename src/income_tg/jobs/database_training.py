@@ -67,12 +67,11 @@ class DatabaseCandidateTrainer:
                 horizon_duration=self.target.horizon_duration,
                 minimum_actionable_return=self.target.minimum_actionable_return,
             )
-        training, _ = chronological_train_test(labeled)
+        model_training, threshold_validation = _model_training_partitions(labeled)
         model = train_ensemble(
-            training.dataset,
+            model_training.dataset,
             target_action_fraction=self.target.target_action_fraction,
         )
-        _, threshold_validation = chronological_train_test(training)
         selected_threshold = _select_confidence_threshold(
             model,
             threshold_validation,
@@ -84,6 +83,12 @@ class DatabaseCandidateTrainer:
         model.metadata["threshold_validation_samples"] = len(
             threshold_validation.dataset.timestamps
         )
+        model.metadata["threshold_validation_from"] = threshold_validation.dataset.timestamps[
+            0
+        ].isoformat()
+        model.metadata["threshold_validation_to"] = threshold_validation.dataset.timestamps[
+            -1
+        ].isoformat()
         return model
 
 
@@ -401,6 +406,14 @@ def _predict_points(
             )
         )
     return tuple(points)
+
+
+def _model_training_partitions(
+    labeled: LabeledDataset,
+) -> tuple[LabeledDataset, LabeledDataset]:
+    """Keep threshold selection strictly out of the model and calibrator fit."""
+    training, _ = chronological_train_test(labeled)
+    return chronological_train_test(training)
 
 
 def _strategy_metrics_from_predictions(
